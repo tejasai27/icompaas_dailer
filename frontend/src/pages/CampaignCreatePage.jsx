@@ -1,40 +1,47 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-    Box, Card, CardContent, Typography, Button, Stepper,
-    Step, StepLabel, TextField, Select, MenuItem, FormControl,
-    InputLabel, Grid, Chip, FormHelperText, CircularProgress,
-    Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-    Alert, Divider, LinearProgress
+    Alert,
+    Box,
+    Button,
+    Card,
+    CardContent,
+    Chip,
+    CircularProgress,
+    Divider,
+    Grid,
+    MenuItem,
+    Select,
+    Step,
+    StepLabel,
+    Stepper,
+    Tab,
+    Tabs,
+    TextField,
+    Typography,
 } from '@mui/material';
-import {
-    ArrowBack, ArrowForward, Check, Upload, CloudUpload,
-    Phone, Settings, Person, FlashOn
-} from '@mui/icons-material';
+import { ArrowBack, ArrowForward, Check, CloudUpload } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
-import api from '../services/api';
 import toast from 'react-hot-toast';
+import api from '../services/api';
 
-const STEPS = ['Dialing Mode', 'Upload Contacts', 'Map Fields', 'Campaign Settings'];
+const STEPS = ['Dialing Mode', 'Campaign Details', 'Add Contacts', 'Review & Create'];
 
-// Step 1: Dialing Mode
 function DialingModeStep({ mode, onChange }) {
     const modes = [
         {
             id: 'power',
-            icon: '⚡',
             title: 'Power Dialer',
-            desc: 'Call one contact at a time sequentially. Agent is connected when contact answers.',
-            features: ['Sequential calling', 'Agent-ready connection', 'Auto-retry on no-answer', 'Guaranteed agent presence'],
-            recommended: true,
+            desc: 'Sequential calls. Better control and cleaner agent workflow.',
+            icon: '⚡',
+            available: true,
         },
         {
             id: 'dynamic',
-            icon: '🔀',
             title: 'Dynamic Dialer',
-            desc: 'Simultaneously dial multiple contacts. Connect the first to answer to the agent.',
-            features: ['Multiple simultaneous calls', 'Higher call volume', 'Higher connect rate', 'Best for large lists'],
-            recommended: false,
+            desc: 'Higher volume parallel dialing for larger lead lists.',
+            icon: '🔀',
+            available: false,
         },
     ];
 
@@ -42,37 +49,36 @@ function DialingModeStep({ mode, onChange }) {
         <Box>
             <Typography variant="h6" fontWeight={600} mb={1}>Select Dialing Mode</Typography>
             <Typography color="text.secondary" variant="body2" mb={3}>
-                Choose how contacts will be dialed in this campaign.
+                This is saved as campaign metadata for this lead batch.
             </Typography>
             <Grid container spacing={2}>
-                {modes.map((m) => (
-                    <Grid item xs={12} md={6} key={m.id}>
+                {modes.map((item) => (
+                    <Grid item xs={12} md={6} key={item.id}>
                         <Box
-                            onClick={() => onChange(m.id)}
+                            onClick={() => {
+                                if (item.available) onChange(item.id);
+                            }}
                             sx={{
-                                p: 3, borderRadius: 3, cursor: 'pointer',
-                                border: `2px solid ${mode === m.id ? '#6366f1' : 'rgba(99,102,241,0.15)'}`,
-                                bgcolor: mode === m.id ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)',
+                                p: 3,
+                                borderRadius: 3,
+                                cursor: item.available ? 'pointer' : 'not-allowed',
+                                border: `2px solid ${mode === item.id ? '#6366f1' : 'rgba(99,102,241,0.15)'}`,
+                                bgcolor: mode === item.id ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)',
+                                opacity: item.available ? 1 : 0.6,
                                 transition: 'all 0.2s',
-                                position: 'relative',
-                                '&:hover': { border: '2px solid rgba(99,102,241,0.4)' },
+                                '&:hover': { borderColor: item.available ? 'rgba(99,102,241,0.4)' : 'rgba(99,102,241,0.15)' },
                             }}
                         >
-                            {m.recommended && (
-                                <Chip label="Recommended" size="small"
-                                    sx={{ position: 'absolute', top: 12, right: 12, bgcolor: '#10b98125', color: '#10b981', fontSize: '0.65rem' }} />
-                            )}
-                            <Typography fontSize="2rem" mb={1}>{m.icon}</Typography>
-                            <Typography variant="h6" fontWeight={600} mb={0.5}>{m.title}</Typography>
-                            <Typography variant="body2" color="text.secondary" mb={2}>{m.desc}</Typography>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                                {m.features.map(f => (
-                                    <Box key={f} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                        <Check sx={{ fontSize: 14, color: mode === m.id ? '#6366f1' : '#475569' }} />
-                                        <Typography variant="caption" color={mode === m.id ? 'text.primary' : 'text.secondary'}>{f}</Typography>
-                                    </Box>
-                                ))}
-                            </Box>
+                            {!item.available ? (
+                                <Chip
+                                    label="In future"
+                                    size="small"
+                                    sx={{ mb: 1, bgcolor: 'rgba(245,158,11,0.2)', color: '#f59e0b' }}
+                                />
+                            ) : null}
+                            <Typography fontSize="2rem" mb={1}>{item.icon}</Typography>
+                            <Typography variant="h6" fontWeight={600}>{item.title}</Typography>
+                            <Typography variant="body2" color="text.secondary">{item.desc}</Typography>
                         </Box>
                     </Grid>
                 ))}
@@ -81,294 +87,64 @@ function DialingModeStep({ mode, onChange }) {
     );
 }
 
-// Step 2: CSV Upload
-function CSVUploadStep({ campaignId, onUploadComplete }) {
-    const [uploading, setUploading] = useState(false);
-    const [uploadResult, setUploadResult] = useState(null);
-
-    const onDrop = useCallback(async (acceptedFiles) => {
-        const file = acceptedFiles[0];
-        if (!file) return;
-
-        setUploading(true);
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('campaign_id', campaignId);
-
-        try {
-            const { data } = await api.post('/contacts/upload_csv/', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
-            setUploadResult(data);
-            onUploadComplete(data);
-            toast.success(`CSV uploaded: ${data.headers.length} columns detected`);
-        } catch (e) {
-            toast.error(e.response?.data?.error || 'Upload failed');
-        } finally {
-            setUploading(false);
-        }
-    }, [campaignId, onUploadComplete]);
-
-    const { getRootProps, getInputProps, isDragActive } = useDropzone({
-        onDrop,
-        accept: { 'text/csv': ['.csv'] },
-        maxFiles: 1,
-    });
-
+function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
     return (
         <Box>
-            <Typography variant="h6" fontWeight={600} mb={1}>Upload Contact List</Typography>
+            <Typography variant="h6" fontWeight={600} mb={1}>Campaign Details</Typography>
             <Typography color="text.secondary" variant="body2" mb={3}>
-                Upload a CSV file containing your contacts. Required column: <strong>phone</strong>
+                Set a campaign label and dialing defaults.
             </Typography>
-
-            {!uploadResult ? (
-                <Box
-                    {...getRootProps()}
-                    sx={{
-                        border: `2px dashed ${isDragActive ? '#6366f1' : 'rgba(99,102,241,0.3)'}`,
-                        borderRadius: 3,
-                        p: 6,
-                        textAlign: 'center',
-                        cursor: 'pointer',
-                        bgcolor: isDragActive ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.03)',
-                        transition: 'all 0.2s',
-                        '&:hover': { borderColor: '#6366f1', bgcolor: 'rgba(99,102,241,0.08)' },
-                    }}
-                >
-                    <input {...getInputProps()} />
-                    {uploading ? (
-                        <CircularProgress sx={{ color: '#6366f1' }} />
-                    ) : (
-                        <>
-                            <CloudUpload sx={{ fontSize: 56, color: '#4f46e5', mb: 2 }} />
-                            <Typography variant="h6" fontWeight={600} mb={1}>
-                                {isDragActive ? 'Drop your CSV here' : 'Drag & drop CSV file here'}
-                            </Typography>
-                            <Typography color="text.secondary" variant="body2" mb={2}>
-                                or click to browse files
-                            </Typography>
-                            <Chip label="CSV files only" size="small"
-                                sx={{ bgcolor: 'rgba(99,102,241,0.15)', color: '#818cf8' }} />
-                        </>
-                    )}
-                </Box>
-            ) : (
-                <Box>
-                    <Alert severity="success" sx={{ mb: 2, bgcolor: 'rgba(16,185,129,0.1)' }}>
-                        ✅ CSV uploaded successfully! {uploadResult.preview_rows?.length} sample rows loaded.
-                    </Alert>
-
-                    <Typography variant="subtitle2" fontWeight={600} mb={1.5}>Detected Columns ({uploadResult.headers?.length})</Typography>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 3 }}>
-                        {uploadResult.headers?.map(h => (
-                            <Chip key={h} label={h} size="small"
-                                sx={{ bgcolor: 'rgba(99,102,241,0.15)', color: '#818cf8' }} />
-                        ))}
-                    </Box>
-
-                    <Typography variant="subtitle2" fontWeight={600} mb={1.5}>Preview (first 5 rows)</Typography>
-                    <TableContainer sx={{ borderRadius: 2, border: '1px solid rgba(99,102,241,0.15)' }}>
-                        <Table size="small">
-                            <TableHead>
-                                <TableRow>
-                                    {uploadResult.headers?.map(h => <TableCell key={h}>{h}</TableCell>)}
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {uploadResult.preview_rows?.map((row, i) => (
-                                    <TableRow key={i}>
-                                        {uploadResult.headers?.map(h => (
-                                            <TableCell key={h} sx={{ fontSize: '0.8rem' }}>{row[h] || '-'}</TableCell>
-                                        ))}
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-
-                    <Button variant="text" sx={{ mt: 2, color: '#6366f1' }}
-                        onClick={() => { setUploadResult(null); onUploadComplete(null); }}>
-                        Upload different file
-                    </Button>
-                </Box>
-            )}
-
-            <Alert severity="info" sx={{ mt: 2, bgcolor: 'rgba(59,130,246,0.1)' }}>
-                <Typography variant="caption">
-                    <strong>Supported columns:</strong> name, phone, email, company, notes, and any custom fields
-                </Typography>
-            </Alert>
-        </Box>
-    );
-}
-
-// Step 3: Field Mapping
-function FieldMappingStep({ uploadData, mapping, onChange }) {
-    const contactFields = [
-        { key: 'name', label: 'Contact Name', required: false },
-        { key: 'phone', label: 'Phone Number', required: true },
-        { key: 'email', label: 'Email Address', required: false },
-        { key: 'company', label: 'Company', required: false },
-        { key: 'notes', label: 'Notes', required: false },
-    ];
-
-    return (
-        <Box>
-            <Typography variant="h6" fontWeight={600} mb={1}>Map CSV Columns</Typography>
-            <Typography color="text.secondary" variant="body2" mb={3}>
-                Tell us which CSV column maps to each contact field.
-            </Typography>
-
-            {uploadData?.suggested_mapping && (
-                <Alert severity="success" sx={{ mb: 3, bgcolor: 'rgba(16,185,129,0.1)' }}>
-                    We auto-detected {Object.keys(uploadData.suggested_mapping).length} field mappings. Review and adjust as needed.
-                </Alert>
-            )}
-
             <Grid container spacing={2}>
-                {contactFields.map(field => (
-                    <Grid item xs={12} sm={6} key={field.key}>
-                        <FormControl fullWidth size="small">
-                            <InputLabel>{field.label}{field.required ? ' *' : ''}</InputLabel>
-                            <Select
-                                value={mapping[field.key] || ''}
-                                label={`${field.label}${field.required ? ' *' : ''}`}
-                                onChange={e => onChange({ ...mapping, [field.key]: e.target.value })}
-                            >
-                                <MenuItem value=""><em>— Skip —</em></MenuItem>
-                                {uploadData?.headers?.map(h => (
-                                    <MenuItem key={h} value={h}>{h}</MenuItem>
-                                ))}
-                            </Select>
-                            {field.required && !mapping[field.key] && (
-                                <FormHelperText error>This field is required</FormHelperText>
-                            )}
-                        </FormControl>
-                    </Grid>
-                ))}
-            </Grid>
-
-            <Divider sx={{ my: 3, borderColor: 'rgba(99,102,241,0.1)' }} />
-
-            <Typography variant="subtitle2" fontWeight={600} mb={1.5}>Mapping Preview</Typography>
-            <TableContainer sx={{ borderRadius: 2, border: '1px solid rgba(99,102,241,0.15)' }}>
-                <Table size="small">
-                    <TableHead>
-                        <TableRow>
-                            <TableCell>Contact Field</TableCell>
-                            <TableCell>CSV Column</TableCell>
-                            <TableCell>Sample Data</TableCell>
-                        </TableRow>
-                    </TableHead>
-                    <TableBody>
-                        {contactFields.map(field => {
-                            const csvCol = mapping[field.key];
-                            const sample = csvCol && uploadData?.preview_rows?.[0]?.[csvCol];
-                            return (
-                                <TableRow key={field.key}>
-                                    <TableCell>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Typography fontSize="0.875rem" fontWeight={500}>{field.label}</Typography>
-                                            {field.required && <Chip label="required" size="small"
-                                                sx={{ height: 16, fontSize: '0.65rem', bgcolor: 'rgba(239,68,68,0.15)', color: '#ef4444' }} />}
-                                        </Box>
-                                    </TableCell>
-                                    <TableCell>
-                                        {csvCol ? (
-                                            <Chip label={csvCol} size="small"
-                                                sx={{ bgcolor: 'rgba(99,102,241,0.15)', color: '#818cf8' }} />
-                                        ) : <Typography color="text.disabled" fontSize="0.875rem">Not mapped</Typography>}
-                                    </TableCell>
-                                    <TableCell>
-                                        <Typography fontSize="0.8rem" color="text.secondary">{sample || '—'}</Typography>
-                                    </TableCell>
-                                </TableRow>
-                            );
-                        })}
-                    </TableBody>
-                </Table>
-            </TableContainer>
-        </Box>
-    );
-}
-
-// Step 4: Campaign Settings
-function CampaignSettingsStep({ settings, onChange, agents }) {
-    return (
-        <Box>
-            <Typography variant="h6" fontWeight={600} mb={1}>Campaign Settings</Typography>
-            <Typography color="text.secondary" variant="body2" mb={3}>
-                Configure agent assignment and dialing behavior.
-            </Typography>
-
-            <Grid container spacing={3}>
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth
                         label="Campaign Name *"
-                        value={settings.name}
-                        onChange={e => onChange({ ...settings, name: e.target.value })}
-                        placeholder="e.g. Q1 Sales Outreach"
+                        value={details.name}
+                        onChange={(e) => onChange({ ...details, name: e.target.value })}
+                        placeholder="e.g. April Outbound Batch"
                     />
                 </Grid>
-                <Grid item xs={12} sm={6}>
-                    <FormControl fullWidth>
-                        <InputLabel>Assigned Agent *</InputLabel>
-                        <Select
-                            value={settings.agent}
-                            label="Assigned Agent *"
-                            onChange={e => onChange({ ...settings, agent: e.target.value })}
-                        >
-                            <MenuItem value=""><em>Select agent…</em></MenuItem>
-                            {agents.map(a => (
-                                <MenuItem key={a.id} value={a.id}>
-                                    {a.full_name} {a.is_available ? '🟢' : '🔴'}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
+                <Grid item xs={12} md={6}>
+                    <TextField
+                        select
+                        fullWidth
+                        label="Timezone"
+                        value={details.timezone}
+                        onChange={(e) => onChange({ ...details, timezone: e.target.value })}
+                    >
+                        <MenuItem value="Asia/Kolkata">Asia/Kolkata</MenuItem>
+                        <MenuItem value="Asia/Dubai">Asia/Dubai</MenuItem>
+                        <MenuItem value="Europe/London">Europe/London</MenuItem>
+                        <MenuItem value="America/New_York">America/New_York</MenuItem>
+                    </TextField>
                 </Grid>
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth
                         type="number"
-                        label="Delay Between Calls (seconds)"
-                        value={settings.delay_between_calls}
-                        onChange={e => onChange({ ...settings, delay_between_calls: parseInt(e.target.value) })}
+                        label="Delay Between Calls (sec)"
+                        value={details.delay_between_calls}
+                        onChange={(e) => onChange({ ...details, delay_between_calls: Number(e.target.value || 0) })}
                         inputProps={{ min: 5, max: 300 }}
-                        helperText="Time to wait before dialing next contact"
                     />
                 </Grid>
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth
                         type="number"
-                        label="Retry Time (minutes)"
-                        value={settings.retry_time}
-                        onChange={e => onChange({ ...settings, retry_time: parseInt(e.target.value) })}
-                        inputProps={{ min: 5, max: 1440 }}
-                        helperText="Minutes to wait before retrying failed calls"
-                    />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <TextField
-                        fullWidth
-                        type="number"
-                        label="Max Retries per Contact"
-                        value={settings.max_retries}
-                        onChange={e => onChange({ ...settings, max_retries: parseInt(e.target.value) })}
+                        label="Max Retries"
+                        value={details.max_retries}
+                        onChange={(e) => onChange({ ...details, max_retries: Number(e.target.value || 0) })}
                         inputProps={{ min: 0, max: 10 }}
                     />
                 </Grid>
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth
                         label="Caller ID (optional)"
-                        value={settings.caller_id}
-                        onChange={e => onChange({ ...settings, caller_id: e.target.value })}
-                        placeholder="+1234567890"
-                        helperText="Override caller ID for this campaign"
+                        value={details.caller_id}
+                        onChange={(e) => onChange({ ...details, caller_id: e.target.value })}
+                        placeholder="+91XXXXXXXXXX"
                     />
                 </Grid>
                 <Grid item xs={12}>
@@ -377,86 +153,295 @@ function CampaignSettingsStep({ settings, onChange, agents }) {
                         multiline
                         rows={3}
                         label="Description (optional)"
-                        value={settings.description}
-                        onChange={e => onChange({ ...settings, description: e.target.value })}
-                        placeholder="Campaign objectives and notes…"
+                        value={details.description}
+                        onChange={(e) => onChange({ ...details, description: e.target.value })}
                     />
+                </Grid>
+                <Grid item xs={12}>
+                    <Typography variant="subtitle2" mb={1}>Assigned Agent (optional metadata)</Typography>
+                    {loadingAgents ? (
+                        <CircularProgress size={20} />
+                    ) : (
+                        <Select
+                            fullWidth
+                            displayEmpty
+                            value={details.agent_id}
+                            onChange={(e) => onChange({ ...details, agent_id: e.target.value })}
+                        >
+                            <MenuItem value=""><em>Not set</em></MenuItem>
+                            {agents.map((agent) => (
+                                <MenuItem key={agent.id} value={agent.id}>
+                                    {agent.display_name} ({agent.status})
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    )}
                 </Grid>
             </Grid>
         </Box>
     );
 }
 
-// Main wizard
+function parseManualLeads(text) {
+    return text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+            const [first = '', second = ''] = line.split(',').map((value) => value.trim());
+            if (second) {
+                return { full_name: first, phone_e164: second };
+            }
+            return { phone_e164: first };
+        });
+}
+
+function AddContactsStep({
+    inputMode,
+    setInputMode,
+    csvFile,
+    setCsvFile,
+    manualLeadsText,
+    setManualLeadsText,
+    submitResult,
+}) {
+    const onDrop = (files) => {
+        setCsvFile(files?.[0] || null);
+    };
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({
+        onDrop,
+        accept: { 'text/csv': ['.csv'] },
+        maxFiles: 1,
+    });
+
+    const parsedManualCount = useMemo(() => parseManualLeads(manualLeadsText).length, [manualLeadsText]);
+
+    return (
+        <Box>
+            <Typography variant="h6" fontWeight={600} mb={1}>Add Contacts</Typography>
+            <Typography color="text.secondary" variant="body2" mb={2}>
+                Upload CSV or paste manual leads. Format for manual: `Name,+91...` or `+91...` one per line.
+            </Typography>
+            <Alert severity="info" sx={{ mb: 2 }}>
+                CSV header supported: <strong>Deal Name,Name,Designation,Email,Phone number</strong>
+            </Alert>
+
+            <Tabs
+                value={inputMode}
+                onChange={(_, value) => setInputMode(value)}
+                sx={{
+                    mb: 2,
+                    '& .MuiTabs-indicator': { bgcolor: '#6366f1' },
+                    '& .MuiTab-root': { textTransform: 'none' },
+                }}
+            >
+                <Tab value="csv" label="CSV Upload" />
+                <Tab value="manual" label="Manual Leads" />
+            </Tabs>
+
+            {inputMode === 'csv' ? (
+                <Box
+                    {...getRootProps()}
+                    sx={{
+                        border: `2px dashed ${isDragActive ? '#6366f1' : 'rgba(99,102,241,0.35)'}`,
+                        borderRadius: 3,
+                        p: 5,
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        bgcolor: isDragActive ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.03)',
+                    }}
+                >
+                    <input {...getInputProps()} />
+                    <CloudUpload sx={{ fontSize: 54, color: '#6366f1', mb: 1 }} />
+                    <Typography variant="body1" fontWeight={600} mb={1}>
+                        {isDragActive ? 'Drop CSV here' : 'Drag & drop CSV file here'}
+                    </Typography>
+                    <Typography color="text.secondary" variant="body2">
+                        Click to choose a `.csv` file
+                    </Typography>
+                    {csvFile ? (
+                        <Chip
+                            label={`Selected: ${csvFile.name}`}
+                            sx={{ mt: 2, bgcolor: 'rgba(16,185,129,0.12)', color: '#10b981' }}
+                        />
+                    ) : null}
+                </Box>
+            ) : (
+                <TextField
+                    fullWidth
+                    multiline
+                    rows={10}
+                    value={manualLeadsText}
+                    onChange={(e) => setManualLeadsText(e.target.value)}
+                    placeholder={'John Doe,+919999999999\n+918888888888'}
+                    helperText={`${parsedManualCount} lead(s) parsed`}
+                />
+            )}
+
+            {submitResult ? (
+                <Alert severity="success" sx={{ mt: 2 }}>
+                    Created {submitResult.createdCount} leads.
+                    Existing duplicates {submitResult.existingCount},
+                    invalid {submitResult.invalidCount}.
+                </Alert>
+            ) : null}
+        </Box>
+    );
+}
+
+function ReviewStep({ dialingMode, details, inputMode, csvFile, manualLeadsText }) {
+    const manualCount = parseManualLeads(manualLeadsText).length;
+
+    return (
+        <Box>
+            <Typography variant="h6" fontWeight={600} mb={2}>Review</Typography>
+            <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                    <Card variant="outlined" sx={{ borderColor: 'rgba(99,102,241,0.2)' }}>
+                        <CardContent>
+                            <Typography variant="subtitle2" color="text.secondary">Campaign</Typography>
+                            <Typography variant="h6" fontWeight={700}>{details.name || '-'}</Typography>
+                            <Typography variant="body2" color="text.secondary">Mode: {dialingMode}</Typography>
+                            <Typography variant="body2" color="text.secondary">Timezone: {details.timezone}</Typography>
+                        </CardContent>
+                    </Card>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                    <Card variant="outlined" sx={{ borderColor: 'rgba(99,102,241,0.2)' }}>
+                        <CardContent>
+                            <Typography variant="subtitle2" color="text.secondary">Contacts Input</Typography>
+                            <Typography variant="h6" fontWeight={700}>
+                                {inputMode === 'csv' ? 'CSV Upload' : 'Manual Leads'}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                                {inputMode === 'csv' ? (csvFile?.name || 'No file selected') : `${manualCount} leads parsed`}
+                            </Typography>
+                        </CardContent>
+                    </Card>
+                </Grid>
+            </Grid>
+            <Alert severity="info" sx={{ mt: 2 }}>
+                This workflow creates leads with campaign label metadata. Use Contacts, Dial, and Call Logs pages to operate calls.
+            </Alert>
+        </Box>
+    );
+}
+
 export default function CampaignCreatePage() {
+    const navigate = useNavigate();
     const [activeStep, setActiveStep] = useState(0);
     const [dialingMode, setDialingMode] = useState('power');
-    const [uploadData, setUploadData] = useState(null);
-    const [tempCampaignId, setTempCampaignId] = useState(null);
-    const [fieldMapping, setFieldMapping] = useState({});
-    const [agents, setAgents] = useState([]);
-    const [settings, setSettings] = useState({
-        name: '', agent: '', delay_between_calls: 15,
-        retry_time: 60, max_retries: 3, caller_id: '', description: '',
+    const [details, setDetails] = useState({
+        name: '',
+        timezone: 'Asia/Kolkata',
+        delay_between_calls: 15,
+        max_retries: 3,
+        caller_id: '',
+        description: '',
+        agent_id: '',
     });
+    const [inputMode, setInputMode] = useState('csv');
+    const [csvFile, setCsvFile] = useState(null);
+    const [manualLeadsText, setManualLeadsText] = useState('');
+    const [submitResult, setSubmitResult] = useState(null);
     const [submitting, setSubmitting] = useState(false);
-    const navigate = useNavigate();
+    const [agents, setAgents] = useState([]);
+    const [loadingAgents, setLoadingAgents] = useState(true);
 
     useEffect(() => {
-        api.get('/auth/users/agents/').then(r => setAgents(r.data));
-        // Create a temp draft campaign to use for CSV upload
-        api.post('/campaigns/', {
-            name: `Draft-${Date.now()}`, dialing_mode: 'power',
-            delay_between_calls: 15, retry_time: 60, max_retries: 3,
-        }).then(r => setTempCampaignId(r.data.id));
+        let mounted = true;
+        api.get('/agents/')
+            .then((res) => {
+                if (!mounted) return;
+                const list = Array.isArray(res.data?.agents) ? res.data.agents : [];
+                setAgents(list);
+            })
+            .catch(() => {
+                toast.error('Unable to fetch agents');
+            })
+            .finally(() => {
+                if (mounted) setLoadingAgents(false);
+            });
+        return () => {
+            mounted = false;
+        };
     }, []);
 
-    useEffect(() => {
-        if (uploadData?.suggested_mapping) {
-            setFieldMapping(uploadData.suggested_mapping);
-        }
-    }, [uploadData]);
-
     const canProceed = () => {
-        if (activeStep === 1 && !uploadData) return false;
-        if (activeStep === 2 && !fieldMapping.phone) return false;
-        if (activeStep === 3 && (!settings.name || !settings.agent)) return false;
+        if (activeStep === 1) {
+            return Boolean(details.name.trim());
+        }
+        if (activeStep === 2) {
+            if (inputMode === 'csv') return Boolean(csvFile);
+            return parseManualLeads(manualLeadsText).length > 0;
+        }
         return true;
     };
 
-    const handleNext = () => {
-        if (activeStep === 2 && uploadData && fieldMapping.phone) {
-            // Finalize import
-            api.post('/contacts/import_csv/', {
-                upload_id: uploadData.upload_id,
-                field_mapping: fieldMapping,
-            }).catch(e => toast.error('Import warning: ' + (e.response?.data?.error || e.message)));
-        }
-        setActiveStep(s => s + 1);
-    };
-
-    const handleFinish = async () => {
-        if (!settings.name || !settings.agent) {
-            toast.error('Campaign name and agent are required');
+    const handleSubmit = async () => {
+        if (!details.name.trim()) {
+            toast.error('Campaign name is required');
             return;
         }
+
         setSubmitting(true);
         try {
-            await api.patch(`/campaigns/${tempCampaignId}/`, {
-                name: settings.name,
-                description: settings.description,
-                dialing_mode: dialingMode,
-                assigned_agent: settings.agent,
-                delay_between_calls: settings.delay_between_calls,
-                retry_time: settings.retry_time,
-                max_retries: settings.max_retries,
-                caller_id: settings.caller_id,
-                status: 'draft',
-            });
-            toast.success('Campaign created successfully!');
-            navigate(`/campaigns/${tempCampaignId}`);
-        } catch (e) {
-            toast.error(e.response?.data?.detail || 'Failed to create campaign');
+            let createdCount = 0;
+            let existingCount = 0;
+            let invalidCount = 0;
+
+            if (inputMode === 'csv') {
+                if (!csvFile) {
+                    throw new Error('Please upload a CSV file');
+                }
+                const formData = new FormData();
+                formData.append('file', csvFile);
+                formData.append('campaign_name', details.name.trim());
+                formData.append('timezone', details.timezone);
+                formData.append('dialing_mode', dialingMode);
+                formData.append('delay_between_calls', String(details.delay_between_calls));
+                formData.append('max_retries', String(details.max_retries));
+                formData.append('caller_id', details.caller_id || '');
+                formData.append('description', details.description || '');
+                formData.append('agent_id', details.agent_id ? String(details.agent_id) : '');
+
+                const { data } = await api.post('/leads/upload/', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
+                createdCount += Number(data?.created_count || 0);
+                existingCount += Number(data?.duplicate_existing_count || 0);
+                invalidCount += Number(data?.invalid_count || 0);
+            } else {
+                const leads = parseManualLeads(manualLeadsText);
+                if (!leads.length) {
+                    throw new Error('Please provide at least one manual lead');
+                }
+
+                const metadata = {
+                    dialing_mode: dialingMode,
+                    delay_between_calls: details.delay_between_calls,
+                    max_retries: details.max_retries,
+                    caller_id: details.caller_id,
+                    description: details.description,
+                    agent_id: details.agent_id || null,
+                };
+
+                const { data } = await api.post('/leads/manual/', {
+                    campaign_name: details.name.trim(),
+                    timezone: details.timezone,
+                    metadata,
+                    leads,
+                });
+                createdCount += Number(data?.created_count || 0);
+                existingCount += Number(data?.duplicate_existing_count || 0);
+                invalidCount += Number(data?.invalid_count || 0);
+            }
+
+            setSubmitResult({ createdCount, existingCount, invalidCount });
+            toast.success(`Campaign created: ${createdCount} leads added`);
+            setActiveStep(3);
+        } catch (error) {
+            toast.error(error?.response?.data?.error || error.message || 'Failed to create campaign');
         } finally {
             setSubmitting(false);
         }
@@ -470,7 +455,9 @@ export default function CampaignCreatePage() {
                 </Button>
                 <Box>
                     <Typography variant="h4" fontWeight={700}>Create Campaign</Typography>
-                    <Typography color="text.secondary" variant="body2">Set up your power dialing campaign</Typography>
+                    <Typography color="text.secondary" variant="body2">
+                        Create campaign lead batch and dialing metadata
+                    </Typography>
                 </Box>
             </Box>
 
@@ -479,30 +466,42 @@ export default function CampaignCreatePage() {
                     <Stepper activeStep={activeStep} sx={{ mb: 4 }}>
                         {STEPS.map((label) => (
                             <Step key={label}>
-                                <StepLabel sx={{
-                                    '& .MuiStepLabel-label': { color: '#94a3b8' },
-                                    '& .MuiStepLabel-label.Mui-active': { color: '#f1f5f9' },
-                                    '& .MuiStepLabel-label.Mui-completed': { color: '#6366f1' },
-                                    '& .MuiStepIcon-root': { color: '#374151' },
-                                    '& .MuiStepIcon-root.Mui-active': { color: '#6366f1' },
-                                    '& .MuiStepIcon-root.Mui-completed': { color: '#10b981' },
-                                }}>
-                                    {label}
-                                </StepLabel>
+                                <StepLabel>{label}</StepLabel>
                             </Step>
                         ))}
                     </Stepper>
 
-                    <Box sx={{ minHeight: 400 }}>
-                        {activeStep === 0 && <DialingModeStep mode={dialingMode} onChange={setDialingMode} />}
-                        {activeStep === 1 && tempCampaignId && (
-                            <CSVUploadStep campaignId={tempCampaignId} onUploadComplete={setUploadData} />
+                    <Box sx={{ minHeight: 360 }}>
+                        {activeStep === 0 && (
+                            <DialingModeStep mode={dialingMode} onChange={setDialingMode} />
+                        )}
+                        {activeStep === 1 && (
+                            <CampaignDetailsStep
+                                details={details}
+                                onChange={setDetails}
+                                agents={agents}
+                                loadingAgents={loadingAgents}
+                            />
                         )}
                         {activeStep === 2 && (
-                            <FieldMappingStep uploadData={uploadData} mapping={fieldMapping} onChange={setFieldMapping} />
+                            <AddContactsStep
+                                inputMode={inputMode}
+                                setInputMode={setInputMode}
+                                csvFile={csvFile}
+                                setCsvFile={setCsvFile}
+                                manualLeadsText={manualLeadsText}
+                                setManualLeadsText={setManualLeadsText}
+                                submitResult={submitResult}
+                            />
                         )}
                         {activeStep === 3 && (
-                            <CampaignSettingsStep settings={settings} onChange={setSettings} agents={agents} />
+                            <ReviewStep
+                                dialingMode={dialingMode}
+                                details={details}
+                                inputMode={inputMode}
+                                csvFile={csvFile}
+                                manualLeadsText={manualLeadsText}
+                            />
                         )}
                     </Box>
 
@@ -510,34 +509,51 @@ export default function CampaignCreatePage() {
 
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Button
-                            disabled={activeStep === 0}
-                            onClick={() => setActiveStep(s => s - 1)}
+                            disabled={activeStep === 0 || submitting}
+                            onClick={() => setActiveStep((step) => Math.max(0, step - 1))}
                             startIcon={<ArrowBack />}
                             sx={{ color: '#94a3b8' }}
                         >
                             Back
                         </Button>
 
-                        {activeStep < STEPS.length - 1 ? (
+                        {activeStep < 2 ? (
                             <Button
                                 variant="contained"
-                                onClick={handleNext}
-                                disabled={!canProceed()}
+                                disabled={!canProceed() || submitting}
+                                onClick={() => setActiveStep((step) => step + 1)}
                                 endIcon={<ArrowForward />}
                                 sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
                             >
                                 Next
                             </Button>
-                        ) : (
+                        ) : activeStep === 2 ? (
                             <Button
                                 variant="contained"
-                                onClick={handleFinish}
-                                disabled={submitting || !canProceed()}
+                                disabled={!canProceed() || submitting}
+                                onClick={handleSubmit}
                                 startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : <Check />}
                                 sx={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
                             >
                                 {submitting ? 'Creating…' : 'Create Campaign'}
                             </Button>
+                        ) : (
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Button
+                                    variant="outlined"
+                                    onClick={() => navigate('/contacts')}
+                                    sx={{ borderColor: '#6366f1', color: '#818cf8' }}
+                                >
+                                    Open Contacts
+                                </Button>
+                                <Button
+                                    variant="contained"
+                                    onClick={() => navigate('/dial')}
+                                    sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                                >
+                                    Open Dialer
+                                </Button>
+                            </Box>
                         )}
                     </Box>
                 </CardContent>

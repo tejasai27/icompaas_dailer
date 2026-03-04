@@ -136,6 +136,10 @@ def list_leads(request: HttpRequest) -> JsonResponse:
         status = dial_state.last_outcome if dial_state and dial_state.last_outcome else "pending"
         retry_count = dial_state.attempt_count if dial_state else 0
         last_called_at = dial_state.last_attempt_at.isoformat() if dial_state and dial_state.last_attempt_at else None
+        metadata = lead.metadata if isinstance(lead.metadata, dict) else {}
+        campaign_settings = metadata.get("campaign_settings")
+        if not isinstance(campaign_settings, dict):
+            campaign_settings = {}
 
         results.append(
             {
@@ -153,6 +157,8 @@ def list_leads(request: HttpRequest) -> JsonResponse:
                 "owner_hint": lead.owner_hint,
                 "timezone": lead.timezone,
                 "external_id": lead.external_id,
+                "campaign_name": str(metadata.get("campaign_name") or ""),
+                "campaign_settings": campaign_settings,
             }
         )
 
@@ -177,6 +183,7 @@ def upload_leads_csv(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "csv header row is missing"}, status=400)
 
     campaign_name = str(request.POST.get("campaign_name") or "").strip()
+    campaign_settings = _extract_campaign_settings(request.POST)
     source_name = campaign_name or upload.name
 
     parsed_rows: list[dict] = []
@@ -202,10 +209,14 @@ def upload_leads_csv(request: HttpRequest) -> JsonResponse:
 
         full_name = _pick_value(row, ["full_name", "name", "lead_name", "Name", "Full Name"]) or "Unknown Lead"
         email = _pick_value(row, ["email", "Email", "email_address"])
-        company_name = _pick_value(row, ["company_name", "company", "Company", "organization"]) or ""
-        owner_hint = _pick_value(row, ["owner_hint", "owner", "agent", "sdr", "Owner"]) or ""
+        company_name = _pick_value(row, ["company_name", "company", "Company", "organization", "deal_name", "Deal Name"]) or ""
+        owner_hint = _pick_value(row, ["owner_hint", "owner", "agent", "sdr", "Owner", "designation", "Designation", "title", "job_title"]) or ""
         timezone_value = _pick_value(row, ["timezone", "tz", "Timezone"]) or "Asia/Kolkata"
         external_id = _pick_value(row, ["external_id", "id", "lead_id", "Lead ID"]) or ""
+
+        row_metadata: dict[str, object] = {"raw_csv": row, "campaign_name": campaign_name}
+        if campaign_settings:
+            row_metadata["campaign_settings"] = campaign_settings
 
         parsed_rows.append(
             {
@@ -217,7 +228,7 @@ def upload_leads_csv(request: HttpRequest) -> JsonResponse:
                 "timezone": timezone_value,
                 "external_id": external_id,
                 "source_file": source_name,
-                "metadata": {"raw_csv": row, "campaign_name": campaign_name},
+                "metadata": row_metadata,
             }
         )
 
@@ -289,6 +300,14 @@ def create_manual_leads(request: HttpRequest) -> JsonResponse:
     campaign_name = str(payload.get("campaign_name") or "").strip()
     timezone_default = str(payload.get("timezone") or "Asia/Kolkata").strip() or "Asia/Kolkata"
     source_name = campaign_name or "manual-entry"
+    metadata_payload = payload.get("metadata")
+    metadata_source: dict[str, object] = {}
+    for key in ("dialing_mode", "caller_id", "description", "delay_between_calls", "max_retries", "agent_id"):
+        if key in payload:
+            metadata_source[key] = payload.get(key)
+    if isinstance(metadata_payload, dict):
+        metadata_source.update(metadata_payload)
+    campaign_settings = _extract_campaign_settings(metadata_source)
 
     leads_payload = payload.get("leads")
     if isinstance(leads_payload, list):
@@ -324,10 +343,14 @@ def create_manual_leads(request: HttpRequest) -> JsonResponse:
 
         full_name = _pick_value(row, ["full_name", "name", "lead_name", "Name", "Full Name"]) or "Unknown Lead"
         email = _pick_value(row, ["email", "Email", "email_address"])
-        company_name = _pick_value(row, ["company_name", "company", "Company", "organization"]) or ""
-        owner_hint = _pick_value(row, ["owner_hint", "owner", "agent", "sdr", "Owner"]) or ""
+        company_name = _pick_value(row, ["company_name", "company", "Company", "organization", "deal_name", "Deal Name"]) or ""
+        owner_hint = _pick_value(row, ["owner_hint", "owner", "agent", "sdr", "Owner", "designation", "Designation", "title", "job_title"]) or ""
         timezone_value = _pick_value(row, ["timezone", "tz", "Timezone"]) or timezone_default
         external_id = _pick_value(row, ["external_id", "id", "lead_id", "Lead ID"]) or ""
+
+        row_metadata: dict[str, object] = {"raw_manual": row, "campaign_name": campaign_name}
+        if campaign_settings:
+            row_metadata["campaign_settings"] = campaign_settings
 
         parsed_rows.append(
             {
@@ -339,7 +362,7 @@ def create_manual_leads(request: HttpRequest) -> JsonResponse:
                 "timezone": timezone_value,
                 "external_id": external_id,
                 "source_file": source_name,
-                "metadata": {"raw_manual": row, "campaign_name": campaign_name},
+                "metadata": row_metadata,
             }
         )
 
@@ -699,11 +722,58 @@ def exotel_webhook(request: HttpRequest) -> JsonResponse:
 
 
 def _pick_value(row: dict, keys: list[str]) -> str:
+    # Try exact key match first.
     for key in keys:
         value = row.get(key)
         if value is not None and str(value).strip():
             return str(value).strip()
+
+    # Fallback to normalized header lookup so variants like
+    # "Phone number", "Phone Number", "phone_number" all work.
+    normalized_row: dict[str, str] = {}
+    for row_key, row_value in row.items():
+        if row_value is None or not str(row_value).strip():
+            continue
+        normalized_key = re.sub(r"[^a-z0-9]+", "", str(row_key).strip().lower())
+        if normalized_key and normalized_key not in normalized_row:
+            normalized_row[normalized_key] = str(row_value).strip()
+
+    for key in keys:
+        normalized_key = re.sub(r"[^a-z0-9]+", "", str(key).strip().lower())
+        value = normalized_row.get(normalized_key)
+        if value:
+            return value
+
     return ""
+
+
+def _extract_campaign_settings(source: object) -> dict:
+    if not source or not hasattr(source, "get"):
+        return {}
+
+    settings: dict[str, object] = {}
+
+    for key in ("dialing_mode", "caller_id", "description"):
+        value = source.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            settings[key] = text
+
+    for key in ("delay_between_calls", "max_retries"):
+        value = source.get(key)
+        parsed = _parse_positive_int(value, 0)
+        if parsed > 0:
+            settings[key] = parsed
+
+    agent_value = source.get("agent_id")
+    if agent_value is not None:
+        agent_text = str(agent_value).strip()
+        if agent_text:
+            settings["agent_id"] = agent_text
+
+    return settings
 
 
 def _normalize_phone(value: str) -> str:
