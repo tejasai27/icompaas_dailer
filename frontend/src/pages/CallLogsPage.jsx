@@ -5,7 +5,7 @@ import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField,
     Select, MenuItem, FormControl, InputLabel, Grid, Pagination, InputAdornment
 } from '@mui/material';
-import { Search, Download, Mic, PlayArrow, Stop } from '@mui/icons-material';
+import { Search, Download, Mic, Sync } from '@mui/icons-material';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 
@@ -22,6 +22,7 @@ export default function CallLogsPage() {
     const [selected, setSelected] = useState(null);
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
+    const [syncing, setSyncing] = useState(false);
     const PAGE_SIZE = 20;
 
     const fetchLogs = async () => {
@@ -50,6 +51,21 @@ export default function CallLogsPage() {
         } catch (e) { toast.error('Failed'); }
     };
 
+    const syncFromExotel = async () => {
+        setSyncing(true);
+        try {
+            const { data } = await api.post('/call-logs/sync/exotel/', { limit: 100, only_open: false });
+            const updated = Number(data?.updated || 0);
+            const failed = Number(data?.failed_count || 0);
+            toast.success(`Exotel sync complete. Updated: ${updated}${failed ? `, Failed: ${failed}` : ''}`);
+            fetchLogs();
+        } catch (e) {
+            toast.error(e.response?.data?.error || 'Exotel sync failed');
+        } finally {
+            setSyncing(false);
+        }
+    };
+
     return (
         <Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -57,6 +73,15 @@ export default function CallLogsPage() {
                     <Typography variant="h4" fontWeight={700}>Call Logs</Typography>
                     <Typography color="text.secondary" variant="body2">Complete history of all dialer calls</Typography>
                 </Box>
+                <Button
+                    variant="outlined"
+                    startIcon={<Sync />}
+                    onClick={syncFromExotel}
+                    disabled={syncing}
+                    sx={{ borderColor: 'rgba(99,102,241,0.4)', color: '#818cf8' }}
+                >
+                    {syncing ? 'Syncing...' : 'Sync Exotel'}
+                </Button>
             </Box>
 
             {/* Filters */}

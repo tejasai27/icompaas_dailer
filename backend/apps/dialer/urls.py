@@ -10,6 +10,7 @@ urlpatterns = [
     path("leads/upload/", views.upload_leads_csv, name="upload-leads-csv"),
     path("leads/manual/", views.create_manual_leads, name="create-manual-leads"),
     path("call-logs/", views.list_call_logs, name="list-call-logs"),
+    path("call-logs/sync/exotel/", views.sync_exotel_call_logs, name="sync-exotel-call-logs"),
     path(
         "call-logs/<int:call_id>/trigger_transcription/",
         views.trigger_transcription,

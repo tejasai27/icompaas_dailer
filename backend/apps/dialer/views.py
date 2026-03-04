@@ -2,7 +2,8 @@ import csv
 import io
 import json
 import os
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta
 from urllib.parse import parse_qsl
 
 from django.conf import settings
@@ -11,6 +12,7 @@ from django.db import connection
 from django.db.models import Q
 from django.http import HttpRequest, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils.dateparse import parse_datetime
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -405,7 +407,7 @@ def list_call_logs(request: HttpRequest) -> JsonResponse:
     page = _parse_positive_int(request.GET.get("page"), 1)
     page_size = 20
     search = str(request.GET.get("search") or "").strip()
-    status_filter = str(request.GET.get("status") or "").strip().lower()
+    status_filter = str(request.GET.get("status") or "").strip().lower().replace("_", "-")
     ordering = str(request.GET.get("ordering") or "-initiated_at").strip()
 
     queryset = CallSession.objects.select_related("lead", "agent")
@@ -429,15 +431,83 @@ def list_call_logs(request: HttpRequest) -> JsonResponse:
 
     all_calls = list(queryset)
     results = [_serialize_call_log(call) for call in all_calls]
+    summary_all = _build_call_logs_summary(results)
 
     if status_filter:
-        results = [row for row in results if str(row.get("status", "")).lower() == status_filter]
+        results = [
+            row
+            for row in results
+            if str(row.get("status", "")).strip().lower().replace("_", "-") == status_filter
+        ]
+    summary_filtered = _build_call_logs_summary(results)
 
     count = len(results)
     offset = (page - 1) * page_size
     paged_results = results[offset : offset + page_size]
 
-    return JsonResponse({"count": count, "page": page, "page_size": page_size, "results": paged_results})
+    return JsonResponse(
+        {
+            "count": count,
+            "page": page,
+            "page_size": page_size,
+            "results": paged_results,
+            "summary": summary_filtered,
+            "summary_all": summary_all,
+        }
+    )
+
+
+@csrf_exempt
+@require_POST
+def sync_exotel_call_logs(request: HttpRequest) -> JsonResponse:
+    payload = _load_json_body(request)
+    limit = min(_parse_positive_int(payload.get("limit"), 50), 200)
+    only_open = _parse_bool(payload.get("only_open"), True)
+
+    provider = get_provider()
+    if not isinstance(provider, ExotelProvider):
+        return JsonResponse({"error": "TELEPHONY_PROVIDER must be set to exotel"}, status=400)
+    if not provider.configured:
+        return JsonResponse({"error": "exotel_not_configured"}, status=400)
+
+    queryset = CallSession.objects.select_related("lead", "agent").filter(
+        provider=ProviderType.EXOTEL
+    ).exclude(provider_call_uuid="")
+    if only_open:
+        queryset = queryset.filter(ended_at__isnull=True)
+
+    calls = list(queryset.order_by("-created_at")[:limit])
+    synced = 0
+    updated = 0
+    failed: list[dict] = []
+
+    for call in calls:
+        result = provider.fetch_call(call.provider_call_uuid)
+        if not result.get("ok"):
+            failed.append(
+                {
+                    "call_id": call.id,
+                    "provider_call_uuid": call.provider_call_uuid,
+                    "error": result.get("error", "unknown_error"),
+                }
+            )
+            continue
+
+        changed = _apply_exotel_snapshot(call, result.get("call") or {}, result.get("raw") or {})
+        synced += 1
+        if changed:
+            updated += 1
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "processed": len(calls),
+            "synced": synced,
+            "updated": updated,
+            "failed_count": len(failed),
+            "failed": failed[:25],
+        }
+    )
 
 
 @csrf_exempt
@@ -673,15 +743,230 @@ def _status_to_log_status(status: str) -> str:
     return value or "initiated"
 
 
+def _flatten_payload_text(payload: object) -> list[str]:
+    values: list[str] = []
+
+    def _walk(item: object) -> None:
+        if isinstance(item, dict):
+            for value in item.values():
+                _walk(value)
+        elif isinstance(item, list):
+            for value in item:
+                _walk(value)
+        elif item is not None:
+            text = str(item).strip().lower()
+            if text:
+                values.append(text)
+
+    _walk(payload)
+    return values
+
+
+def _extract_event_type(raw_payload: dict) -> str:
+    if not isinstance(raw_payload, dict):
+        return ""
+
+    last_event = raw_payload.get("last_event")
+    if isinstance(last_event, dict):
+        value = (
+            last_event.get("EventType")
+            or last_event.get("CallStatus")
+            or last_event.get("Status")
+            or last_event.get("event")
+            or ""
+        )
+        return str(value).strip().lower()
+
+    events = raw_payload.get("events")
+    if isinstance(events, list) and events:
+        event = events[-1]
+        if isinstance(event, dict):
+            value = event.get("EventType") or event.get("CallStatus") or event.get("Status") or ""
+            return str(value).strip().lower()
+
+    return ""
+
+
+def _extract_provider_disposition(raw_payload: dict) -> str:
+    tokens = _flatten_payload_text(raw_payload)
+    if not tokens:
+        return ""
+
+    def has_any(keywords: tuple[str, ...]) -> bool:
+        return any(any(keyword in token for keyword in keywords) for token in tokens)
+
+    # Keep specific outcomes first; payloads often include generic words like terminal/completed too.
+    if has_any(("busy",)):
+        return "busy"
+    if has_any(("no-answer", "no_answer", "noanswer", "not answered", "unanswered", "timeout")):
+        return "no-answer"
+    if has_any(("cancelled", "canceled", "cancel")):
+        return "cancelled"
+    if has_any(("failed", "failure", "error", "rejected", "unreachable")):
+        return "failed"
+    if has_any(("answered", "connected", "in-progress", "inprogress", "human_detected", "human")):
+        return "answered"
+    if has_any(("completed", "terminal", "hangup", "disconnected")):
+        return "completed"
+    return ""
+
+
+def _derive_display_status(call: CallSession) -> str:
+    base_status = _status_to_log_status(call.status)
+    raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
+
+    payload_disposition = _extract_provider_disposition(raw_payload)
+    if payload_disposition:
+        return payload_disposition
+
+    event_type = _extract_event_type(raw_payload)
+
+    if event_type:
+        if any(token in event_type for token in ("busy",)):
+            return "busy"
+        if any(token in event_type for token in ("no-answer", "no_answer", "noanswer")):
+            return "no-answer"
+        if any(token in event_type for token in ("cancelled", "canceled")):
+            return "cancelled"
+        if any(token in event_type for token in ("answered", "connected", "in-progress", "inprogress")):
+            return "answered"
+        if any(token in event_type for token in ("failed",)):
+            return "failed"
+        if any(token in event_type for token in ("completed", "terminal", "hangup", "disconnected")):
+            return "completed"
+
+    return base_status
+
+
 def _format_duration(call: CallSession) -> str:
-    start_at = call.answered_at or call.started_at or call.created_at
+    raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
+    duration_seconds = _extract_duration_seconds(raw_payload)
+    if duration_seconds is not None and duration_seconds >= 0:
+        return _format_seconds(duration_seconds)
+
+    start_at = call.answered_at
     end_at = call.ended_at
     if not start_at or not end_at:
-        return "-"
+        # Fallback when provider didn't send duration but we have terminal timestamps.
+        start_at = call.started_at or call.created_at
+        if not start_at or not end_at:
+            return "-"
 
     total_seconds = max(0, int((end_at - start_at).total_seconds()))
-    minutes, seconds = divmod(total_seconds, 60)
+    return _format_seconds(total_seconds)
+
+
+def _format_seconds(total_seconds: int) -> str:
+    total_seconds = max(0, int(total_seconds))
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def _coerce_duration_seconds(value: object) -> int | None:
+    max_reasonable_seconds = 12 * 60 * 60
+
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        parsed = max(0, int(value))
+        return parsed if parsed <= max_reasonable_seconds else None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Ignore datetime-like strings (e.g. 2026-03-04 14:49:22) that are not durations.
+    if ("-" in text and ":" in text) or "t" in text.lower():
+        return None
+
+    if text.isdigit():
+        parsed = max(0, int(text))
+        return parsed if parsed <= max_reasonable_seconds else None
+
+    if ":" in text:
+        parts = text.split(":")
+        if all(part.isdigit() for part in parts):
+            if len(parts) == 2:
+                minutes, seconds = map(int, parts)
+                if seconds >= 60:
+                    return None
+                parsed = max(0, minutes * 60 + seconds)
+                return parsed if parsed <= max_reasonable_seconds else None
+            if len(parts) == 3:
+                hours, minutes, seconds = map(int, parts)
+                if minutes >= 60 or seconds >= 60:
+                    return None
+                parsed = max(0, hours * 3600 + minutes * 60 + seconds)
+                return parsed if parsed <= max_reasonable_seconds else None
+
+    match = re.fullmatch(r"(\d+)\s*(s|sec|secs|second|seconds)?", text.lower())
+    if match:
+        parsed = max(0, int(match.group(1)))
+        return parsed if parsed <= max_reasonable_seconds else None
+    return None
+
+
+def _extract_duration_seconds(raw_payload: dict) -> int | None:
+    preferred_keys = (
+        "CallDuration",
+        "DialCallDuration",
+        "ConversationDuration",
+        "Duration",
+        "duration",
+        "BillSec",
+        "billsec",
+        "TalkTime",
+        "talk_time",
+    )
+
+    def scan(obj: object) -> int | None:
+        if isinstance(obj, dict):
+            for key in preferred_keys:
+                if key in obj:
+                    parsed = _coerce_duration_seconds(obj.get(key))
+                    if parsed is not None:
+                        return parsed
+
+            for key, value in obj.items():
+                key_text = str(key).lower()
+                if "duration" in key_text or "billsec" in key_text or "talk" in key_text:
+                    parsed = _coerce_duration_seconds(value)
+                    if parsed is not None:
+                        return parsed
+
+            for value in obj.values():
+                # Recurse only into nested containers; avoid parsing arbitrary scalar fields.
+                if not isinstance(value, (dict, list)):
+                    continue
+                parsed = scan(value)
+                if parsed is not None:
+                    return parsed
+            return None
+
+        if isinstance(obj, list):
+            for item in reversed(obj):
+                if not isinstance(item, (dict, list)):
+                    continue
+                parsed = scan(item)
+                if parsed is not None:
+                    return parsed
+            return None
+
+        return None
+
+    for source in (
+        raw_payload.get("last_event"),
+        raw_payload.get("events"),
+        raw_payload.get("init_response"),
+    ):
+        parsed = scan(source)
+        if parsed is not None:
+            return parsed
+
+    return None
 
 
 def _campaign_name_from_lead(lead: Lead) -> str:
@@ -690,6 +975,31 @@ def _campaign_name_from_lead(lead: Lead) -> str:
     if campaign:
         return str(campaign)
     return "General"
+
+
+def _build_call_logs_summary(rows: list[dict]) -> dict:
+    status_counts: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "").strip().lower().replace("_", "-")
+        if not status:
+            status = "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    answered = status_counts.get("answered", 0)
+    failed = status_counts.get("failed", 0)
+    no_answer = status_counts.get("no-answer", 0) + status_counts.get("no_answer", 0)
+
+    return {
+        "total_calls": len(rows),
+        "answered_calls": answered,
+        "failed_calls": failed,
+        "no_answer_calls": no_answer,
+        "busy_calls": status_counts.get("busy", 0),
+        "cancelled_calls": status_counts.get("cancelled", 0) + status_counts.get("canceled", 0),
+        "completed_calls": status_counts.get("completed", 0),
+        "initiated_calls": status_counts.get("initiated", 0),
+        "status_counts": status_counts,
+    }
 
 
 def _serialize_call_log(call: CallSession) -> dict:
@@ -703,15 +1013,19 @@ def _serialize_call_log(call: CallSession) -> dict:
         transcript_status = "none"
 
     initiated_at = call.started_at or call.created_at
+    init_request = raw_payload.get("init_request") if isinstance(raw_payload.get("init_request"), dict) else {}
+    campaign_name = _campaign_name_from_lead(call.lead)
+    if init_request.get("campaign_name"):
+        campaign_name = str(init_request.get("campaign_name"))
 
     return {
         "id": call.id,
         "public_id": str(call.public_id),
         "contact_name": call.lead.full_name,
         "contact_phone": call.lead.phone_e164,
-        "campaign_name": _campaign_name_from_lead(call.lead),
+        "campaign_name": campaign_name,
         "agent_name": call.agent.display_name if call.agent else "Unassigned",
-        "status": _status_to_log_status(call.status),
+        "status": _derive_display_status(call),
         "duration_formatted": _format_duration(call),
         "recording_url": call.recording_url,
         "transcript_status": transcript_status,
@@ -719,6 +1033,178 @@ def _serialize_call_log(call: CallSession) -> dict:
         "initiated_at": initiated_at.isoformat() if initiated_at else None,
         "provider_call_uuid": call.provider_call_uuid,
     }
+
+
+def _parse_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _first_present(mapping: dict, keys: tuple[str, ...]) -> object:
+    for key in keys:
+        if key in mapping and mapping.get(key) not in (None, ""):
+            return mapping.get(key)
+    return None
+
+
+def _parse_provider_datetime(value: object) -> datetime | None:
+    if value in (None, ""):
+        return None
+
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    candidates = [text]
+    if text.endswith("Z"):
+        candidates.append(f"{text[:-1]}+00:00")
+
+    for candidate in candidates:
+        dt = parse_datetime(candidate)
+        if dt:
+            if timezone.is_naive(dt):
+                return timezone.make_aware(dt, timezone.get_current_timezone())
+            return dt
+
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S%z",
+        "%d-%m-%Y %H:%M:%S",
+        "%a, %d %b %Y %H:%M:%S %z",
+    ):
+        try:
+            dt = datetime.strptime(text, fmt)
+            if timezone.is_naive(dt):
+                return timezone.make_aware(dt, timezone.get_current_timezone())
+            return dt
+        except ValueError:
+            continue
+
+    return None
+
+
+def _map_exotel_status_to_call_status(status_text: str) -> str:
+    value = str(status_text or "").strip().lower()
+    if not value:
+        return ""
+
+    if any(token in value for token in ("busy", "failed", "error", "rejected", "no-answer", "no_answer", "cancel")):
+        return CallStatus.FAILED
+    if any(token in value for token in ("completed", "terminal", "hangup", "disconnected")):
+        return CallStatus.COMPLETED
+    if any(token in value for token in ("answered", "connected", "in-progress", "inprogress")):
+        return CallStatus.BRIDGED
+    if "ring" in value:
+        return CallStatus.RINGING
+    if any(token in value for token in ("queued", "initiated", "start", "dialing", "progress")):
+        return CallStatus.DIALING
+    return ""
+
+
+def _apply_exotel_snapshot(call: CallSession, call_data: dict, raw_response: dict) -> bool:
+    if not isinstance(call_data, dict):
+        call_data = {}
+    if not isinstance(raw_response, dict):
+        raw_response = {}
+
+    update_fields: list[str] = []
+
+    provider_sid = str(
+        _first_present(call_data, ("Sid", "CallSid", "UUID", "CallUUID", "id")) or ""
+    ).strip()
+    if provider_sid and call.provider_call_uuid != provider_sid:
+        call.provider_call_uuid = provider_sid
+        update_fields.append("provider_call_uuid")
+
+    status_value = _first_present(call_data, ("Status", "CallStatus", "EventType", "State"))
+    mapped_status = _map_exotel_status_to_call_status(str(status_value or ""))
+    amd_value = _first_present(call_data, ("AnsweredBy", "Machine", "AmdStatus"))
+    amd = _normalize_amd(str(amd_value)) if amd_value is not None else None
+
+    next_status = mapped_status or call.status
+    if amd == "machine":
+        next_status = CallStatus.MACHINE_DETECTED
+    elif amd == "human" and next_status in {CallStatus.DIALING, CallStatus.RINGING, CallStatus.QUEUED}:
+        next_status = CallStatus.HUMAN_DETECTED
+
+    if next_status and call.status != next_status:
+        call.status = next_status
+        update_fields.append("status")
+
+    started_at = _parse_provider_datetime(
+        _first_present(
+            call_data,
+            (
+                "StartTime",
+                "StartDate",
+                "DateCreated",
+                "Created",
+                "CreatedAt",
+            ),
+        )
+    )
+    if started_at and (not call.started_at or started_at < call.started_at):
+        call.started_at = started_at
+        update_fields.append("started_at")
+
+    answered_at = _parse_provider_datetime(
+        _first_present(call_data, ("AnsweredTime", "AnswerTime", "ConnectTime", "BridgeTime"))
+    )
+    if answered_at and (not call.answered_at or answered_at < call.answered_at):
+        call.answered_at = answered_at
+        update_fields.append("answered_at")
+
+    ended_at = _parse_provider_datetime(
+        _first_present(call_data, ("EndTime", "CompletedTime", "HangupTime", "DateUpdated", "UpdatedAt"))
+    )
+    if ended_at and (not call.ended_at or ended_at > call.ended_at):
+        call.ended_at = ended_at
+        update_fields.append("ended_at")
+
+    if call.status in {CallStatus.COMPLETED, CallStatus.FAILED, CallStatus.MACHINE_DETECTED} and not call.ended_at:
+        call.ended_at = timezone.now()
+        update_fields.append("ended_at")
+
+    recording_url = str(
+        _first_present(
+            call_data,
+            (
+                "RecordingUrl",
+                "RecordingURL",
+                "RecordingUrlMp3",
+                "RecordingUrlWav",
+                "CallRecordingUrl",
+            ),
+        )
+        or ""
+    ).strip()
+    if recording_url and call.recording_url != recording_url:
+        call.recording_url = recording_url
+        update_fields.append("recording_url")
+
+    payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
+    payload["exotel_poll"] = {
+        "fetched_at": timezone.now().isoformat(),
+        "call": call_data,
+        "raw": raw_response,
+    }
+    call.raw_provider_payload = payload
+    update_fields.append("raw_provider_payload")
+
+    if not update_fields:
+        return False
+
+    call.save(update_fields=list(dict.fromkeys(update_fields)))
+    return True
 
 
 def _parse_positive_int(value: object, default: int) -> int:

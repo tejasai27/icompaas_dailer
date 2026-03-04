@@ -26,6 +26,8 @@ Monorepo setup for a React + Django power dialer with PostgreSQL and Redis, desi
 - `GET /api/v1/dialer/leads/next/`
 - `POST /api/v1/dialer/leads/upload/`
 - `POST /api/v1/dialer/leads/manual/`
+- `GET /api/v1/dialer/call-logs/`
+- `POST /api/v1/dialer/call-logs/sync/exotel/`
 - `POST /api/v1/dialer/calls/start/exotel/`
 - `POST /api/v1/dialer/webhooks/exotel/`
 

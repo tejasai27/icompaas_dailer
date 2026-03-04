@@ -2,14 +2,13 @@ import React, { useEffect, useState } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Chip, Button,
     Table, TableBody, TableCell, TableContainer, TableHead,
-    TableRow, Avatar, LinearProgress, Skeleton, CircularProgress
+    TableRow, Skeleton
 } from '@mui/material';
 import {
-    Campaign, Phone, CheckCircle, Cancel, TrendingUp,
-    PlayArrow, Pause, BarChart, Add
+    Phone, CheckCircle, TrendingUp, Contacts, History
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import api from '../services/api';
 import useAuth from '../context/useAuth';
 
@@ -38,16 +37,30 @@ const StatCard = ({ title, value, icon, color, subtitle, loading }) => (
     </Card>
 );
 
-const statusColors = {
-    active: '#10b981', paused: '#f59e0b', completed: '#6366f1',
-    draft: '#64748b', archived: '#374151'
+const callStatusColors = {
+    answered: '#10b981',
+    'no-answer': '#f59e0b',
+    no_answer: '#f59e0b',
+    busy: '#f59e0b',
+    failed: '#ef4444',
+    completed: '#6366f1',
+    initiated: '#3b82f6',
+    cancelled: '#64748b',
 };
 
-const callStatusColors = { answered: '#10b981', 'no-answer': '#f59e0b', busy: '#f59e0b', failed: '#ef4444', completed: '#6366f1' };
+const initialStats = {
+    total_calls: 0,
+    total_contacts: 0,
+    answered_calls: 0,
+    failed_calls: 0,
+    no_answer_calls: 0,
+    busy_calls: 0,
+    cancelled_calls: 0,
+};
 
 export default function DashboardPage() {
-    const [stats, setStats] = useState(null);
-    const [campaigns, setCampaigns] = useState([]);
+    const [stats, setStats] = useState(initialStats);
+    const [statusCounts, setStatusCounts] = useState({});
     const [recentCalls, setRecentCalls] = useState([]);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
@@ -56,13 +69,25 @@ export default function DashboardPage() {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [statsRes, callsRes] = await Promise.all([
-                    api.get('/campaigns/dashboard_stats/'),
+                const [leadsRes, callsRes] = await Promise.all([
+                    api.get('/leads/?page=1&page_size=1'),
                     api.get('/call-logs/?ordering=-initiated_at'),
                 ]);
-                setStats(statsRes.data);
-                setCampaigns(statsRes.data.recent_campaigns || []);
-                setRecentCalls(callsRes.data.results || []);
+                const leadsData = leadsRes.data || {};
+                const callData = callsRes.data || {};
+                const summary = callData.summary_all || callData.summary || {};
+
+                setStats({
+                    total_calls: Number(summary.total_calls || callData.count || 0),
+                    total_contacts: Number(leadsData.count || 0),
+                    answered_calls: Number(summary.answered_calls || 0),
+                    failed_calls: Number(summary.failed_calls || 0),
+                    no_answer_calls: Number(summary.no_answer_calls || 0),
+                    busy_calls: Number(summary.busy_calls || 0),
+                    cancelled_calls: Number(summary.cancelled_calls || 0),
+                });
+                setStatusCounts(summary.status_counts || {});
+                setRecentCalls(Array.isArray(callData.results) ? callData.results : []);
             } catch (err) {
                 console.error(err);
             } finally {
@@ -77,8 +102,12 @@ export default function DashboardPage() {
     const pieData = stats ? [
         { name: 'Answered', value: stats.answered_calls, color: '#10b981' },
         { name: 'Failed', value: stats.failed_calls, color: '#ef4444' },
-        { name: 'No Answer', value: Math.max(0, stats.total_calls - stats.answered_calls - stats.failed_calls), color: '#f59e0b' },
+        { name: 'No Answer', value: stats.no_answer_calls, color: '#f59e0b' },
     ] : [];
+
+    const connectRate = stats.total_calls > 0
+        ? ((stats.answered_calls / stats.total_calls) * 100).toFixed(1)
+        : '0.0';
 
     return (
         <Box>
@@ -92,36 +121,33 @@ export default function DashboardPage() {
                 </Box>
                 <Button
                     variant="contained"
-                    startIcon={<Add />}
-                    onClick={() => navigate('/campaigns/new')}
+                    startIcon={<Phone />}
+                    onClick={() => navigate('/dial')}
                     sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
                 >
-                    New Campaign
+                    Open Dialer
                 </Button>
             </Box>
 
             {/* Stats row */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={12} sm={6} md={3}>
-                    <StatCard title="Total Campaigns" value={stats?.total_campaigns ?? '—'}
-                        icon={<Campaign />} color="#6366f1" loading={loading}
-                        subtitle={`${stats?.active_campaigns ?? 0} active`} />
+                    <StatCard title="Total Calls" value={stats.total_calls.toLocaleString()}
+                        icon={<History />} color="#6366f1" loading={loading} />
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                    <StatCard title="Total Contacts" value={stats?.total_contacts?.toLocaleString() ?? '—'}
-                        icon={<Phone />} color="#3b82f6" loading={loading} />
+                    <StatCard title="Total Contacts" value={stats.total_contacts.toLocaleString()}
+                        icon={<Contacts />} color="#3b82f6" loading={loading} />
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                    <StatCard title="Calls Answered" value={stats?.answered_calls ?? '—'}
+                    <StatCard title="Calls Answered" value={stats.answered_calls.toLocaleString()}
                         icon={<CheckCircle />} color="#10b981" loading={loading}
-                        subtitle={`of ${stats?.total_calls ?? 0} total`} />
+                        subtitle={`of ${stats.total_calls.toLocaleString()} total`} />
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
                     <StatCard
                         title="Connect Rate"
-                        value={stats?.total_calls > 0
-                            ? `${((stats.answered_calls / stats.total_calls) * 100).toFixed(1)}%`
-                            : '—'}
+                        value={`${connectRate}%`}
                         icon={<TrendingUp />} color="#f59e0b" loading={loading} />
                 </Grid>
             </Grid>
@@ -157,60 +183,28 @@ export default function DashboardPage() {
                     </Card>
                 </Grid>
 
-                {/* Recent Campaigns */}
+                {/* Status Breakdown */}
                 <Grid item xs={12} md={8}>
                     <Card>
                         <CardContent>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                <Typography variant="subtitle1" fontWeight={600}>Recent Campaigns</Typography>
-                                <Button size="small" onClick={() => navigate('/campaigns')} sx={{ color: '#6366f1' }}>
-                                    View all
-                                </Button>
-                            </Box>
+                            <Typography variant="subtitle1" fontWeight={600} mb={2}>Call Status Breakdown</Typography>
                             {loading ? <Skeleton height={200} /> : (
-                                <Box>
-                                    {campaigns.length === 0 ? (
-                                        <Box sx={{ textAlign: 'center', py: 4 }}>
-                                            <Campaign sx={{ fontSize: 40, color: '#374151', mb: 1 }} />
-                                            <Typography color="text.secondary">No campaigns yet</Typography>
-                                            <Button variant="outlined" size="small" sx={{ mt: 1 }}
-                                                onClick={() => navigate('/campaigns/new')}>Create Campaign</Button>
-                                        </Box>
-                                    ) : campaigns.map(c => (
-                                        <Box
-                                            key={c.id}
-                                            onClick={() => navigate(`/campaigns/${c.id}`)}
-                                            sx={{
-                                                display: 'flex', alignItems: 'center', gap: 2, p: 1.5, mb: 1,
-                                                borderRadius: 2, cursor: 'pointer',
-                                                '&:hover': { bgcolor: 'rgba(99,102,241,0.08)' },
-                                                border: '1px solid rgba(99,102,241,0.08)'
-                                            }}
-                                        >
-                                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                                                <Typography fontWeight={600} noWrap fontSize="0.875rem">{c.name}</Typography>
-                                                <Typography variant="caption" color="text.secondary">
-                                                    {c.dialed_contacts}/{c.total_contacts} dialed
-                                                </Typography>
-                                                <LinearProgress
-                                                    value={c.progress_percentage}
-                                                    variant="determinate"
-                                                    sx={{ mt: 0.5, height: 4, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.1)', '& .MuiLinearProgress-bar': { bgcolor: '#6366f1' } }}
-                                                />
+                                <Grid container spacing={1.5}>
+                                    {Object.entries(statusCounts).length === 0 ? (
+                                        <Grid item xs={12}>
+                                            <Box sx={{ textAlign: 'center', py: 8 }}>
+                                                <Typography color="text.secondary">No call status data yet</Typography>
                                             </Box>
-                                            <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
-                                                <Chip
-                                                    label={c.status}
-                                                    size="small"
-                                                    sx={{ bgcolor: `${statusColors[c.status] || '#64748b'}25`, color: statusColors[c.status] || '#64748b', mb: 0.5 }}
-                                                />
-                                                <Typography variant="caption" color="text.secondary" display="block">
-                                                    {c.connect_rate}% connect
-                                                </Typography>
+                                        </Grid>
+                                    ) : Object.entries(statusCounts).map(([status, value]) => (
+                                        <Grid item xs={6} sm={4} md={3} key={status}>
+                                            <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.12)' }}>
+                                                <Typography variant="caption" color="text.secondary">{status}</Typography>
+                                                <Typography variant="h6" fontWeight={700}>{Number(value).toLocaleString()}</Typography>
                                             </Box>
-                                        </Box>
+                                        </Grid>
                                     ))}
-                                </Box>
+                                </Grid>
                             )}
                         </CardContent>
                     </Card>
@@ -274,7 +268,7 @@ export default function DashboardPage() {
                                         </TableCell>
                                         <TableCell>
                                             <Typography fontSize="0.75rem" color="text.secondary">
-                                                {new Date(call.initiated_at).toLocaleTimeString()}
+                                                {call.initiated_at ? new Date(call.initiated_at).toLocaleTimeString() : '-'}
                                             </Typography>
                                         </TableCell>
                                     </TableRow>

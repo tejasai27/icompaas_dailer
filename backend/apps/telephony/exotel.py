@@ -127,6 +127,39 @@ class ExotelProvider(TelephonyProvider):
         except requests.RequestException:
             return
 
+    def fetch_call(self, provider_call_id: str) -> dict:
+        if not self.configured or not provider_call_id:
+            return {"ok": False, "error": "missing_configuration_or_call_id"}
+
+        endpoint = f"{self.base_url}/Calls/{provider_call_id}.json"
+        try:
+            response = requests.get(
+                endpoint,
+                auth=self._auth(),
+                timeout=self.timeout_seconds,
+            )
+        except requests.RequestException as exc:
+            return {"ok": False, "error": str(exc)}
+
+        try:
+            raw_payload: Any = response.json()
+        except ValueError:
+            raw_payload = {"raw_text": response.text}
+
+        if response.status_code >= 400:
+            return {
+                "ok": False,
+                "error": "provider_http_error",
+                "http_status": response.status_code,
+                "raw": raw_payload,
+            }
+
+        call_data = raw_payload.get("Call") if isinstance(raw_payload, dict) else None
+        if not isinstance(call_data, dict):
+            call_data = raw_payload if isinstance(raw_payload, dict) else {}
+
+        return {"ok": True, "call": call_data, "raw": raw_payload}
+
     def _extract_answered_by(self, payload: dict) -> str | None:
         if "AnsweredBy" in payload:
             return str(payload.get("AnsweredBy"))
