@@ -14,7 +14,8 @@ import {
     TextField,
     Typography,
 } from '@mui/material';
-import { Backspace, Call, Contacts, Dialpad } from '@mui/icons-material';
+import { Backspace, Call, Contacts, Dialpad, Pause, PlayArrow, Refresh } from '@mui/icons-material';
+import { useSearchParams } from 'react-router-dom';
 import { request } from '../lib/api';
 import toast from 'react-hot-toast';
 
@@ -37,6 +38,8 @@ function normalizePhone(value) {
 }
 
 export default function DialPage() {
+    const [searchParams] = useSearchParams();
+    const campaignId = searchParams.get('campaign_id');
     const [tab, setTab] = useState(0);
     const [dialNumber, setDialNumber] = useState('');
     const [quickName, setQuickName] = useState('');
@@ -54,6 +57,11 @@ export default function DialPage() {
     const [loadingContacts, setLoadingContacts] = useState(false);
     const [calling, setCalling] = useState(false);
     const [lastCall, setLastCall] = useState(null);
+    const [campaign, setCampaign] = useState(null);
+    const [campaignQueue, setCampaignQueue] = useState([]);
+    const [loadingCampaign, setLoadingCampaign] = useState(false);
+    const [campaignActionLoading, setCampaignActionLoading] = useState(false);
+    const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
     const selectedContact = useMemo(
         () => contacts.find((item) => String(item.id) === String(selectedContactId)) || null,
@@ -88,6 +96,9 @@ export default function DialPage() {
                 if (contactSearch.trim()) {
                     path += `&search=${encodeURIComponent(contactSearch.trim())}`;
                 }
+                if (campaignId) {
+                    path += `&campaign=${encodeURIComponent(campaignId)}`;
+                }
                 const data = await request(path);
                 if (!mounted) return;
                 const rows = Array.isArray(data.results) ? data.results : [];
@@ -111,7 +122,105 @@ export default function DialPage() {
         return () => {
             mounted = false;
         };
-    }, [contactSearch]);
+    }, [contactSearch, campaignId]);
+
+    async function reloadCampaignContext(showErrorToast = true, options = {}) {
+        const silent = Boolean(options?.silent);
+        if (!campaignId) {
+            setCampaign(null);
+            setCampaignQueue([]);
+            return;
+        }
+        if (!silent) {
+            setLoadingCampaign(true);
+        }
+        try {
+            const [campaignData, queueData] = await Promise.all([
+                request(`/api/v1/dialer/campaigns/${campaignId}/`),
+                request(`/api/v1/dialer/campaigns/${campaignId}/queue/`),
+            ]);
+            setCampaign(campaignData);
+            setCampaignQueue(Array.isArray(queueData?.results) ? queueData.results : []);
+
+            if (campaignData?.assigned_agent_id) {
+                setAgentId(String(campaignData.assigned_agent_id));
+            }
+            if (campaignData?.agent_phone) {
+                setAgentPhone(campaignData.agent_phone);
+            }
+            if (campaignData?.caller_id) {
+                setCallerId(campaignData.caller_id);
+            }
+        } catch (error) {
+            if (showErrorToast) {
+                toast.error(error.message || 'Failed to load campaign context');
+            }
+        } finally {
+            if (!silent) {
+                setLoadingCampaign(false);
+            }
+        }
+    }
+
+    useEffect(() => {
+        reloadCampaignContext(true);
+    }, [campaignId]);
+
+    useEffect(() => {
+        if (!campaign?.next_dispatch_at) {
+            setCooldownSeconds(Number(campaign?.cooldown_remaining_seconds || 0));
+            return undefined;
+        }
+
+        const computeRemaining = () => {
+            const ms = new Date(campaign.next_dispatch_at).getTime() - Date.now();
+            return ms > 0 ? Math.ceil(ms / 1000) : 0;
+        };
+
+        setCooldownSeconds(computeRemaining());
+        const timer = setInterval(() => {
+            setCooldownSeconds(computeRemaining());
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [campaign?.next_dispatch_at, campaign?.cooldown_remaining_seconds]);
+
+    function formatSeconds(total) {
+        const value = Math.max(0, Number(total || 0));
+        const minutes = Math.floor(value / 60);
+        const seconds = value % 60;
+        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    const activeCall = campaign?.active_call || null;
+    const waitingForPickup = activeCall?.stage === 'waiting_for_pickup';
+    const pickupLeftSeconds = Number(activeCall?.pickup_seconds_left || 0);
+    const lastCallStatus = String(campaign?.last_call_result?.display_status || '').toLowerCase();
+
+    useEffect(() => {
+        if (!campaignId) return undefined;
+        const shouldTick = campaign && (campaign.status === 'active' || Number(campaign.in_progress_contacts || 0) > 0);
+        if (!shouldTick) return undefined;
+        let cancelled = false;
+
+        const tickCampaign = async () => {
+            try {
+                await request(`/api/v1/dialer/campaigns/${campaignId}/tick/`, { method: 'POST' });
+                if (!cancelled) {
+                    await reloadCampaignContext(false, { silent: true });
+                }
+            } catch (_error) {
+                // Keep polling; transient provider/network failures are expected.
+            }
+        };
+
+        tickCampaign();
+        const interval = setInterval(tickCampaign, 5000);
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+    }, [campaignId, campaign?.status, campaign?.in_progress_contacts]);
 
     function appendKey(key) {
         setDialNumber((value) => `${value}${key}`);
@@ -133,6 +242,9 @@ export default function DialPage() {
                 agent_id: agentIdNum,
                 agent_phone: agentPhoneValue,
             };
+            if (campaignId) {
+                payload.campaign_id = Number(campaignId);
+            }
             if (callerId.trim()) {
                 payload.caller_id = callerId.trim();
             }
@@ -189,6 +301,26 @@ export default function DialPage() {
         await startCall(Number(selectedContact.id));
     }
 
+    async function runCampaignAction(action) {
+        if (!campaignId) return;
+        setCampaignActionLoading(true);
+        try {
+            await request(`/api/v1/dialer/campaigns/${campaignId}/${action}/`, { method: 'POST' });
+            const actionLabel = {
+                start: 'started',
+                resume: 'resumed',
+                pause: 'paused',
+                dispatch: 'dispatched',
+            }[action] || 'updated';
+            toast.success(`Campaign ${actionLabel}`);
+            await reloadCampaignContext(false);
+        } catch (error) {
+            toast.error(error.message || `Failed to ${action} campaign`);
+        } finally {
+            setCampaignActionLoading(false);
+        }
+    }
+
     return (
         <Box>
             <Box sx={{ mb: 3 }}>
@@ -198,6 +330,12 @@ export default function DialPage() {
                 <Typography color="text.secondary" variant="body2">
                     Use keypad for quick dial or call directly from contacts.
                 </Typography>
+                {campaignId ? (
+                    <Chip
+                        label={`Campaign #${campaignId}`}
+                        sx={{ mt: 1, bgcolor: 'rgba(99,102,241,0.2)', color: '#818cf8' }}
+                    />
+                ) : null}
             </Box>
 
             <Grid container spacing={2}>
@@ -334,6 +472,105 @@ export default function DialPage() {
                 </Grid>
 
                 <Grid item xs={12} md={5}>
+                    {campaignId ? (
+                        <Card sx={{ mb: 2 }}>
+                            <CardContent>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                    <Typography variant="h6" fontWeight={600}>Campaign Queue</Typography>
+                                    <Button
+                                        size="small"
+                                        startIcon={<Refresh fontSize="small" />}
+                                        onClick={() => reloadCampaignContext(false)}
+                                        disabled={campaignActionLoading}
+                                    >
+                                        Refresh
+                                    </Button>
+                                </Box>
+                                {loadingCampaign ? (
+                                    <CircularProgress size={20} />
+                                ) : (
+                                    <>
+                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                            {campaign?.name || `Campaign ${campaignId}`} · Status: {campaign?.status || '-'}
+                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                                            Queue: {campaign?.pending_contacts ?? 0} pending, {campaign?.in_progress_contacts ?? 0} in progress
+                                        </Typography>
+                                        {campaign?.active_call_in_progress ? (
+                                            waitingForPickup ? (
+                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#f59e0b' }}>
+                                                    Customer not picking yet. Waiting {formatSeconds(pickupLeftSeconds)} before marking no-answer.
+                                                </Typography>
+                                            ) : (
+                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#10b981' }}>
+                                                    Agent is in call{activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.
+                                                </Typography>
+                                            )
+                                        ) : cooldownSeconds > 0 ? (
+                                            lastCallStatus === 'no-answer' ? (
+                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#ef4444' }}>
+                                                    Customer did not pick the call. Next call in {formatSeconds(cooldownSeconds)}.
+                                                </Typography>
+                                            ) : (
+                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#f59e0b' }}>
+                                                    Next call in {formatSeconds(cooldownSeconds)}
+                                                </Typography>
+                                            )
+                                        ) : null}
+                                        <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
+                                            {campaign?.status === 'active' ? (
+                                                <Button
+                                                    size="small"
+                                                    variant="outlined"
+                                                    startIcon={<Pause fontSize="small" />}
+                                                    onClick={() => runCampaignAction('pause')}
+                                                    disabled={campaignActionLoading}
+                                                >
+                                                    Pause
+                                                </Button>
+                                            ) : campaign?.status === 'draft' || campaign?.status === 'paused' ? (
+                                                <Button
+                                                    size="small"
+                                                    variant="contained"
+                                                    startIcon={<PlayArrow fontSize="small" />}
+                                                    onClick={() => runCampaignAction(campaign?.status === 'draft' ? 'start' : 'resume')}
+                                                    disabled={campaignActionLoading}
+                                                >
+                                                    {campaign?.status === 'draft' ? 'Start' : 'Resume'}
+                                                </Button>
+                                            ) : null}
+                                            <Button
+                                                size="small"
+                                                variant="outlined"
+                                                onClick={() => runCampaignAction('dispatch')}
+                                                disabled={campaignActionLoading || campaign?.status !== 'active'}
+                                            >
+                                                Run Next
+                                            </Button>
+                                        </Box>
+                                        <Box sx={{ display: 'grid', gap: 0.75, maxHeight: 180, overflowY: 'auto' }}>
+                                            {campaignQueue.slice(0, 8).map((item) => (
+                                                <Box key={item.id} sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(99,102,241,0.08)' }}>
+                                                    <Typography fontSize="0.8rem" fontWeight={600}>
+                                                        {item.contact_name}
+                                                    </Typography>
+                                                    <Typography fontSize="0.75rem" color="text.secondary">
+                                                        {item.contact_phone} · {item.status} · tries {item.attempt_count}
+                                                    </Typography>
+                                                </Box>
+                                            ))}
+                                            {campaignQueue.length === 0 ? (
+                                                <Typography fontSize="0.8rem" color="text.secondary">
+                                                    Queue is empty.
+                                                </Typography>
+                                            ) : null}
+                                        </Box>
+                                    </>
+                                )}
+                            </CardContent>
+                        </Card>
+                    ) : null}
+
                     <Card sx={{ mb: 2 }}>
                         <CardContent>
                             <Typography variant="h6" fontWeight={600} mb={2}>

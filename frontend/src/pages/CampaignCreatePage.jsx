@@ -19,45 +19,31 @@ import {
     TextField,
     Typography,
 } from '@mui/material';
-import { ArrowBack, ArrowForward, Check, CloudUpload } from '@mui/icons-material';
+import { ArrowBack, ArrowForward, Check, CloudUpload, PlayArrow } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 
-const STEPS = ['Dialing Mode', 'Campaign Details', 'Add Contacts', 'Review & Create'];
+const STEPS = ['Dialing Mode', 'Campaign Details', 'Add Contacts', 'Review'];
 
 function DialingModeStep({ mode, onChange }) {
     const modes = [
-        {
-            id: 'power',
-            title: 'Power Dialer',
-            desc: 'Sequential calls. Better control and cleaner agent workflow.',
-            icon: '⚡',
-            available: true,
-        },
-        {
-            id: 'dynamic',
-            title: 'Dynamic Dialer',
-            desc: 'Higher volume parallel dialing for larger lead lists.',
-            icon: '🔀',
-            available: false,
-        },
+        { id: 'power', title: 'Power Dialer', desc: 'Queue calls one by one.', icon: '⚡', available: true },
+        { id: 'dynamic', title: 'Dynamic Dialer', desc: 'Parallel dialing for high volume.', icon: '🔀', available: false },
     ];
 
     return (
         <Box>
             <Typography variant="h6" fontWeight={600} mb={1}>Select Dialing Mode</Typography>
             <Typography color="text.secondary" variant="body2" mb={3}>
-                This is saved as campaign metadata for this lead batch.
+                Power dialer is active now. Dynamic dialer will be added later.
             </Typography>
             <Grid container spacing={2}>
                 {modes.map((item) => (
                     <Grid item xs={12} md={6} key={item.id}>
                         <Box
-                            onClick={() => {
-                                if (item.available) onChange(item.id);
-                            }}
+                            onClick={() => item.available && onChange(item.id)}
                             sx={{
                                 p: 3,
                                 borderRadius: 3,
@@ -92,7 +78,7 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
         <Box>
             <Typography variant="h6" fontWeight={600} mb={1}>Campaign Details</Typography>
             <Typography color="text.secondary" variant="body2" mb={3}>
-                Set a campaign label and dialing defaults.
+                Agent and agent phone are required to run queue calls.
             </Typography>
             <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
@@ -101,7 +87,6 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                         label="Campaign Name *"
                         value={details.name}
                         onChange={(e) => onChange({ ...details, name: e.target.value })}
-                        placeholder="e.g. April Outbound Batch"
                     />
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -131,19 +116,18 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                 <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth
-                        type="number"
-                        label="Max Retries"
-                        value={details.max_retries}
-                        onChange={(e) => onChange({ ...details, max_retries: Number(e.target.value || 0) })}
-                        inputProps={{ min: 0, max: 10 }}
+                        label="Caller ID (optional)"
+                        value={details.caller_id}
+                        onChange={(e) => onChange({ ...details, caller_id: e.target.value })}
+                        placeholder="+91XXXXXXXXXX"
                     />
                 </Grid>
                 <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth
-                        label="Caller ID (optional)"
-                        value={details.caller_id}
-                        onChange={(e) => onChange({ ...details, caller_id: e.target.value })}
+                        label="Agent Phone *"
+                        value={details.agent_phone}
+                        onChange={(e) => onChange({ ...details, agent_phone: e.target.value })}
                         placeholder="+91XXXXXXXXXX"
                     />
                 </Grid>
@@ -158,17 +142,16 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                     />
                 </Grid>
                 <Grid item xs={12}>
-                    <Typography variant="subtitle2" mb={1}>Assigned Agent (optional metadata)</Typography>
+                    <Typography variant="subtitle2" mb={1}>Assigned Agent *</Typography>
                     {loadingAgents ? (
                         <CircularProgress size={20} />
                     ) : (
                         <Select
                             fullWidth
-                            displayEmpty
                             value={details.agent_id}
                             onChange={(e) => onChange({ ...details, agent_id: e.target.value })}
                         >
-                            <MenuItem value=""><em>Not set</em></MenuItem>
+                            <MenuItem value=""><em>Select agent…</em></MenuItem>
                             {agents.map((agent) => (
                                 <MenuItem key={agent.id} value={agent.id}>
                                     {agent.display_name} ({agent.status})
@@ -189,9 +172,7 @@ function parseManualLeads(text) {
         .filter(Boolean)
         .map((line) => {
             const [first = '', second = ''] = line.split(',').map((value) => value.trim());
-            if (second) {
-                return { full_name: first, phone_e164: second };
-            }
+            if (second) return { full_name: first, phone_e164: second };
             return { phone_e164: first };
         });
 }
@@ -203,24 +184,20 @@ function AddContactsStep({
     setCsvFile,
     manualLeadsText,
     setManualLeadsText,
-    submitResult,
 }) {
-    const onDrop = (files) => {
-        setCsvFile(files?.[0] || null);
-    };
+    const onDrop = (files) => setCsvFile(files?.[0] || null);
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
         accept: { 'text/csv': ['.csv'] },
         maxFiles: 1,
     });
-
     const parsedManualCount = useMemo(() => parseManualLeads(manualLeadsText).length, [manualLeadsText]);
 
     return (
         <Box>
             <Typography variant="h6" fontWeight={600} mb={1}>Add Contacts</Typography>
             <Typography color="text.secondary" variant="body2" mb={2}>
-                Upload CSV or paste manual leads. Format for manual: `Name,+91...` or `+91...` one per line.
+                Upload CSV or paste manual leads. Manual format: `Name,+91...` or `+91...` per line.
             </Typography>
             <Alert severity="info" sx={{ mb: 2 }}>
                 CSV header supported: <strong>Deal Name,Name,Designation,Email,Phone number</strong>
@@ -229,11 +206,7 @@ function AddContactsStep({
             <Tabs
                 value={inputMode}
                 onChange={(_, value) => setInputMode(value)}
-                sx={{
-                    mb: 2,
-                    '& .MuiTabs-indicator': { bgcolor: '#6366f1' },
-                    '& .MuiTab-root': { textTransform: 'none' },
-                }}
+                sx={{ mb: 2, '& .MuiTabs-indicator': { bgcolor: '#6366f1' }, '& .MuiTab-root': { textTransform: 'none' } }}
             >
                 <Tab value="csv" label="CSV Upload" />
                 <Tab value="manual" label="Manual Leads" />
@@ -256,14 +229,9 @@ function AddContactsStep({
                     <Typography variant="body1" fontWeight={600} mb={1}>
                         {isDragActive ? 'Drop CSV here' : 'Drag & drop CSV file here'}
                     </Typography>
-                    <Typography color="text.secondary" variant="body2">
-                        Click to choose a `.csv` file
-                    </Typography>
+                    <Typography color="text.secondary" variant="body2">Click to choose a `.csv` file</Typography>
                     {csvFile ? (
-                        <Chip
-                            label={`Selected: ${csvFile.name}`}
-                            sx={{ mt: 2, bgcolor: 'rgba(16,185,129,0.12)', color: '#10b981' }}
-                        />
+                        <Chip label={`Selected: ${csvFile.name}`} sx={{ mt: 2, bgcolor: 'rgba(16,185,129,0.12)', color: '#10b981' }} />
                     ) : null}
                 </Box>
             ) : (
@@ -277,21 +245,12 @@ function AddContactsStep({
                     helperText={`${parsedManualCount} lead(s) parsed`}
                 />
             )}
-
-            {submitResult ? (
-                <Alert severity="success" sx={{ mt: 2 }}>
-                    Created {submitResult.createdCount} leads.
-                    Existing duplicates {submitResult.existingCount},
-                    invalid {submitResult.invalidCount}.
-                </Alert>
-            ) : null}
         </Box>
     );
 }
 
-function ReviewStep({ dialingMode, details, inputMode, csvFile, manualLeadsText }) {
+function ReviewStep({ dialingMode, details, inputMode, csvFile, manualLeadsText, submitResult, createdCampaign }) {
     const manualCount = parseManualLeads(manualLeadsText).length;
-
     return (
         <Box>
             <Typography variant="h6" fontWeight={600} mb={2}>Review</Typography>
@@ -302,26 +261,36 @@ function ReviewStep({ dialingMode, details, inputMode, csvFile, manualLeadsText 
                             <Typography variant="subtitle2" color="text.secondary">Campaign</Typography>
                             <Typography variant="h6" fontWeight={700}>{details.name || '-'}</Typography>
                             <Typography variant="body2" color="text.secondary">Mode: {dialingMode}</Typography>
-                            <Typography variant="body2" color="text.secondary">Timezone: {details.timezone}</Typography>
+                            <Typography variant="body2" color="text.secondary">
+                                Agent: {details.agent_id || '-'} · Phone: {details.agent_phone || '-'}
+                            </Typography>
+                            {createdCampaign?.id ? (
+                                <Typography variant="body2" color="text.secondary">Campaign ID: {createdCampaign.id}</Typography>
+                            ) : null}
                         </CardContent>
                     </Card>
                 </Grid>
                 <Grid item xs={12} md={6}>
                     <Card variant="outlined" sx={{ borderColor: 'rgba(99,102,241,0.2)' }}>
                         <CardContent>
-                            <Typography variant="subtitle2" color="text.secondary">Contacts Input</Typography>
+                            <Typography variant="subtitle2" color="text.secondary">Contacts</Typography>
                             <Typography variant="h6" fontWeight={700}>
                                 {inputMode === 'csv' ? 'CSV Upload' : 'Manual Leads'}
                             </Typography>
                             <Typography variant="body2" color="text.secondary">
                                 {inputMode === 'csv' ? (csvFile?.name || 'No file selected') : `${manualCount} leads parsed`}
                             </Typography>
+                            {submitResult ? (
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                    Created {submitResult.createdCount} · Existing {submitResult.existingCount} · Invalid {submitResult.invalidCount}
+                                </Typography>
+                            ) : null}
                         </CardContent>
                     </Card>
                 </Grid>
             </Grid>
-            <Alert severity="info" sx={{ mt: 2 }}>
-                This workflow creates leads with campaign label metadata. Use Contacts, Dial, and Call Logs pages to operate calls.
+            <Alert severity="success" sx={{ mt: 2 }}>
+                Campaign created with queue leads. You can start queue calling from campaign detail or directly run in dialer.
             </Alert>
         </Box>
     );
@@ -335,15 +304,16 @@ export default function CampaignCreatePage() {
         name: '',
         timezone: 'Asia/Kolkata',
         delay_between_calls: 15,
-        max_retries: 3,
         caller_id: '',
         description: '',
         agent_id: '',
+        agent_phone: '',
     });
     const [inputMode, setInputMode] = useState('csv');
     const [csvFile, setCsvFile] = useState(null);
     const [manualLeadsText, setManualLeadsText] = useState('');
     const [submitResult, setSubmitResult] = useState(null);
+    const [createdCampaign, setCreatedCampaign] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [agents, setAgents] = useState([]);
     const [loadingAgents, setLoadingAgents] = useState(true);
@@ -356,20 +326,14 @@ export default function CampaignCreatePage() {
                 const list = Array.isArray(res.data?.agents) ? res.data.agents : [];
                 setAgents(list);
             })
-            .catch(() => {
-                toast.error('Unable to fetch agents');
-            })
-            .finally(() => {
-                if (mounted) setLoadingAgents(false);
-            });
-        return () => {
-            mounted = false;
-        };
+            .catch(() => toast.error('Unable to fetch agents'))
+            .finally(() => mounted && setLoadingAgents(false));
+        return () => { mounted = false; };
     }, []);
 
     const canProceed = () => {
         if (activeStep === 1) {
-            return Boolean(details.name.trim());
+            return Boolean(details.name.trim() && details.agent_id && details.agent_phone.trim());
         }
         if (activeStep === 2) {
             if (inputMode === 'csv') return Boolean(csvFile);
@@ -383,24 +347,45 @@ export default function CampaignCreatePage() {
             toast.error('Campaign name is required');
             return;
         }
+        if (!details.agent_id || !details.agent_phone.trim()) {
+            toast.error('Assigned agent and agent phone are required');
+            return;
+        }
 
         setSubmitting(true);
         try {
+            const campaignPayload = {
+                name: details.name.trim(),
+                description: details.description,
+                dialing_mode: dialingMode,
+                assigned_agent: Number(details.agent_id),
+                agent_phone: details.agent_phone.trim(),
+                caller_id: details.caller_id.trim(),
+                delay_between_calls: details.delay_between_calls,
+                max_retries: 0,
+                metadata: { timezone: details.timezone },
+            };
+            const campaignRes = await api.post('/campaigns/', campaignPayload);
+            const campaign = campaignRes.data || {};
+            const campaignId = campaign.id;
+            if (!campaignId) {
+                throw new Error('Campaign was not created');
+            }
+
             let createdCount = 0;
             let existingCount = 0;
             let invalidCount = 0;
 
             if (inputMode === 'csv') {
-                if (!csvFile) {
-                    throw new Error('Please upload a CSV file');
-                }
+                if (!csvFile) throw new Error('Please upload a CSV file');
                 const formData = new FormData();
                 formData.append('file', csvFile);
+                formData.append('campaign_id', String(campaignId));
                 formData.append('campaign_name', details.name.trim());
                 formData.append('timezone', details.timezone);
                 formData.append('dialing_mode', dialingMode);
                 formData.append('delay_between_calls', String(details.delay_between_calls));
-                formData.append('max_retries', String(details.max_retries));
+                formData.append('max_retries', '0');
                 formData.append('caller_id', details.caller_id || '');
                 formData.append('description', details.description || '');
                 formData.append('agent_id', details.agent_id ? String(details.agent_id) : '');
@@ -413,20 +398,17 @@ export default function CampaignCreatePage() {
                 invalidCount += Number(data?.invalid_count || 0);
             } else {
                 const leads = parseManualLeads(manualLeadsText);
-                if (!leads.length) {
-                    throw new Error('Please provide at least one manual lead');
-                }
-
+                if (!leads.length) throw new Error('Please provide at least one manual lead');
                 const metadata = {
                     dialing_mode: dialingMode,
                     delay_between_calls: details.delay_between_calls,
-                    max_retries: details.max_retries,
+                    max_retries: 0,
                     caller_id: details.caller_id,
                     description: details.description,
                     agent_id: details.agent_id || null,
                 };
-
                 const { data } = await api.post('/leads/manual/', {
+                    campaign_id: campaignId,
                     campaign_name: details.name.trim(),
                     timezone: details.timezone,
                     metadata,
@@ -437,13 +419,25 @@ export default function CampaignCreatePage() {
                 invalidCount += Number(data?.invalid_count || 0);
             }
 
+            setCreatedCampaign(campaign);
             setSubmitResult({ createdCount, existingCount, invalidCount });
-            toast.success(`Campaign created: ${createdCount} leads added`);
+            toast.success(`Campaign created: ${createdCount} leads attached to queue`);
             setActiveStep(3);
         } catch (error) {
-            toast.error(error?.response?.data?.error || error.message || 'Failed to create campaign');
+            toast.error(error?.response?.data?.error || error?.response?.data?.detail || error.message || 'Failed to create campaign');
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    const handleStartCampaign = async () => {
+        if (!createdCampaign?.id) return;
+        try {
+            await api.post(`/campaigns/${createdCampaign.id}/start/`);
+            toast.success('Campaign started');
+            navigate(`/campaigns/${createdCampaign.id}`);
+        } catch (error) {
+            toast.error(error?.response?.data?.error || 'Failed to start campaign');
         }
     };
 
@@ -456,7 +450,7 @@ export default function CampaignCreatePage() {
                 <Box>
                     <Typography variant="h4" fontWeight={700}>Create Campaign</Typography>
                     <Typography color="text.secondary" variant="body2">
-                        Create campaign lead batch and dialing metadata
+                        Queue-based calling campaign setup
                     </Typography>
                 </Box>
             </Box>
@@ -465,16 +459,12 @@ export default function CampaignCreatePage() {
                 <CardContent sx={{ p: 4 }}>
                     <Stepper activeStep={activeStep} sx={{ mb: 4 }}>
                         {STEPS.map((label) => (
-                            <Step key={label}>
-                                <StepLabel>{label}</StepLabel>
-                            </Step>
+                            <Step key={label}><StepLabel>{label}</StepLabel></Step>
                         ))}
                     </Stepper>
 
                     <Box sx={{ minHeight: 360 }}>
-                        {activeStep === 0 && (
-                            <DialingModeStep mode={dialingMode} onChange={setDialingMode} />
-                        )}
+                        {activeStep === 0 && <DialingModeStep mode={dialingMode} onChange={setDialingMode} />}
                         {activeStep === 1 && (
                             <CampaignDetailsStep
                                 details={details}
@@ -491,7 +481,6 @@ export default function CampaignCreatePage() {
                                 setCsvFile={setCsvFile}
                                 manualLeadsText={manualLeadsText}
                                 setManualLeadsText={setManualLeadsText}
-                                submitResult={submitResult}
                             />
                         )}
                         {activeStep === 3 && (
@@ -501,6 +490,8 @@ export default function CampaignCreatePage() {
                                 inputMode={inputMode}
                                 csvFile={csvFile}
                                 manualLeadsText={manualLeadsText}
+                                submitResult={submitResult}
+                                createdCampaign={createdCampaign}
                             />
                         )}
                     </Box>
@@ -541,15 +532,26 @@ export default function CampaignCreatePage() {
                             <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Button
                                     variant="outlined"
-                                    onClick={() => navigate('/contacts')}
+                                    onClick={() => createdCampaign?.id && navigate(`/campaigns/${createdCampaign.id}`)}
                                     sx={{ borderColor: '#6366f1', color: '#818cf8' }}
+                                    disabled={!createdCampaign?.id}
                                 >
-                                    Open Contacts
+                                    Open Campaign
                                 </Button>
                                 <Button
                                     variant="contained"
-                                    onClick={() => navigate('/dial')}
+                                    startIcon={<PlayArrow />}
+                                    onClick={handleStartCampaign}
+                                    sx={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
+                                    disabled={!createdCampaign?.id}
+                                >
+                                    Start Queue
+                                </Button>
+                                <Button
+                                    variant="contained"
+                                    onClick={() => createdCampaign?.id && navigate(`/dial?campaign_id=${createdCampaign.id}`)}
                                     sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                                    disabled={!createdCampaign?.id}
                                 >
                                     Open Dialer
                                 </Button>

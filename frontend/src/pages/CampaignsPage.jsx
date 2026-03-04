@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     Box,
     Button,
@@ -10,15 +10,23 @@ import {
     Skeleton,
     Typography,
 } from '@mui/material';
-import { Add, Campaign, Dialpad } from '@mui/icons-material';
+import {
+    Add,
+    Campaign,
+    Dialpad,
+    Pause,
+    PlayArrow,
+} from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import toast from 'react-hot-toast';
 import api from '../services/api';
+import toast from 'react-hot-toast';
 
 const STATUS_COLORS = {
     active: { bg: '#10b98125', text: '#10b981', label: 'Active' },
+    paused: { bg: '#f59e0b25', text: '#f59e0b', label: 'Paused' },
     completed: { bg: '#6366f125', text: '#6366f1', label: 'Completed' },
     draft: { bg: '#64748b25', text: '#94a3b8', label: 'Draft' },
+    archived: { bg: '#37415125', text: '#94a3b8', label: 'Archived' },
 };
 
 const MODE_LABELS = {
@@ -26,20 +34,25 @@ const MODE_LABELS = {
     dynamic: '🔀 Dynamic',
 };
 
-function toCampaignStatus(campaign) {
-    if (campaign.dialed_contacts <= 0) return 'draft';
-    if (campaign.dialed_contacts >= campaign.total_contacts) return 'completed';
-    return 'active';
-}
-
-function isConnectedLeadStatus(status) {
-    const value = String(status || '').toLowerCase();
-    return value === 'connected' || value === 'interested' || value === 'follow_up';
-}
-
-function CampaignCard({ campaign }) {
+function CampaignCard({ campaign, onAction }) {
     const navigate = useNavigate();
     const statusCfg = STATUS_COLORS[campaign.status] || STATUS_COLORS.draft;
+
+    const runAction = async (action) => {
+        try {
+            await api.post(`/campaigns/${campaign.id}/${action}/`);
+            const actionLabel = {
+                start: 'started',
+                resume: 'resumed',
+                pause: 'paused',
+                stop: 'stopped',
+            }[action] || 'updated';
+            toast.success(`Campaign ${actionLabel}`);
+            onAction();
+        } catch (error) {
+            toast.error(error?.response?.data?.error || `Failed to ${action}`);
+        }
+    };
 
     return (
         <Card
@@ -54,7 +67,14 @@ function CampaignCard({ campaign }) {
             <CardContent>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
                     <Box sx={{ flex: 1, mr: 1 }}>
-                        <Typography fontWeight={700} noWrap>{campaign.name}</Typography>
+                        <Typography
+                            fontWeight={700}
+                            noWrap
+                            onClick={() => navigate(`/campaigns/${campaign.id}`)}
+                            sx={{ cursor: 'pointer', '&:hover': { color: '#6366f1' } }}
+                        >
+                            {campaign.name}
+                        </Typography>
                         <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
                             <Chip
                                 label={statusCfg.label}
@@ -62,15 +82,10 @@ function CampaignCard({ campaign }) {
                                 sx={{ bgcolor: statusCfg.bg, color: statusCfg.text, height: 20, fontSize: '0.7rem' }}
                             />
                             <Chip
-                                label={MODE_LABELS[campaign.dialing_mode] || campaign.dialing_mode || MODE_LABELS.power}
+                                label={MODE_LABELS[campaign.dialing_mode] || campaign.dialing_mode}
                                 size="small"
                                 variant="outlined"
-                                sx={{
-                                    height: 20,
-                                    fontSize: '0.7rem',
-                                    borderColor: 'rgba(99,102,241,0.3)',
-                                    color: '#818cf8',
-                                }}
+                                sx={{ height: 20, fontSize: '0.7rem', borderColor: 'rgba(99,102,241,0.3)', color: '#818cf8' }}
                             />
                         </Box>
                     </Box>
@@ -122,18 +137,39 @@ function CampaignCard({ campaign }) {
                 </Grid>
 
                 <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
-                    Agent: {campaign.assigned_agent_name || 'Not assigned'}
+                    Agent: {campaign.assigned_agent_name || 'Unassigned'}
                 </Typography>
 
-                <Box sx={{ display: 'flex', gap: 1 }}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    {campaign.status === 'active' ? (
+                        <Button size="small" variant="outlined" startIcon={<Pause />} onClick={() => runAction('pause')}
+                            sx={{ borderColor: '#f59e0b', color: '#f59e0b', flex: 1 }}>
+                            Pause
+                        </Button>
+                    ) : campaign.status === 'draft' || campaign.status === 'paused' ? (
+                        <Button size="small" variant="contained" startIcon={<PlayArrow />}
+                            onClick={() => runAction(campaign.status === 'draft' ? 'start' : 'resume')}
+                            sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)', flex: 1 }}>
+                            {campaign.status === 'draft' ? 'Start' : 'Resume'}
+                        </Button>
+                    ) : null}
+
                     <Button
                         size="small"
-                        variant="contained"
+                        variant="outlined"
                         startIcon={<Dialpad />}
-                        onClick={() => navigate('/dial')}
-                        sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)', flex: 1 }}
+                        onClick={() => navigate(`/dial?campaign_id=${campaign.id}`)}
+                        sx={{ borderColor: 'rgba(99,102,241,0.5)', color: '#818cf8' }}
                     >
-                        Open Dialer
+                        Dialer
+                    </Button>
+                    <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => navigate(`/campaigns/${campaign.id}`)}
+                        sx={{ color: '#94a3b8' }}
+                    >
+                        Details
                     </Button>
                 </Box>
             </CardContent>
@@ -147,112 +183,58 @@ export default function CampaignsPage() {
     const [filter, setFilter] = useState('all');
     const navigate = useNavigate();
 
-    const fetchAllLeads = async () => {
-        const pageSize = 100;
-        let page = 1;
-        let totalCount = 0;
-        const allResults = [];
-
-        while (true) {
-            const { data } = await api.get(`/leads/?page=${page}&page_size=${pageSize}`);
-            const chunk = Array.isArray(data?.results) ? data.results : [];
-            totalCount = Number(data?.count || chunk.length);
-            allResults.push(...chunk);
-
-            if (allResults.length >= totalCount || chunk.length === 0 || page >= 50) {
-                break;
-            }
-            page += 1;
-        }
-
-        return allResults;
-    };
-
-    const fetchCampaigns = async () => {
+    const fetchCampaigns = async ({ silent = false } = {}) => {
         try {
-            setLoading(true);
-            const [leads, agentsRes] = await Promise.all([fetchAllLeads(), api.get('/agents/')]);
-            const agents = Array.isArray(agentsRes.data?.agents) ? agentsRes.data.agents : [];
-            const agentNameById = new Map(agents.map((agent) => [String(agent.id), agent.display_name]));
-
-            const grouped = new Map();
-            leads.forEach((lead) => {
-                const campaignName = String(lead?.campaign_name || 'General').trim() || 'General';
-                const settings = lead?.campaign_settings && typeof lead.campaign_settings === 'object'
-                    ? lead.campaign_settings
-                    : {};
-                const group = grouped.get(campaignName) || {
-                    id: campaignName,
-                    name: campaignName,
-                    dialing_mode: String(settings?.dialing_mode || 'power'),
-                    assigned_agent_id: settings?.agent_id ? String(settings.agent_id) : '',
-                    total_contacts: 0,
-                    dialed_contacts: 0,
-                    connected_calls: 0,
-                };
-
-                group.total_contacts += 1;
-                if (lead?.retry_count > 0 || lead?.last_called_at || String(lead?.status || '').toLowerCase() !== 'pending') {
-                    group.dialed_contacts += 1;
-                }
-                if (isConnectedLeadStatus(lead?.status)) {
-                    group.connected_calls += 1;
-                }
-
-                if (!group.assigned_agent_id && settings?.agent_id) {
-                    group.assigned_agent_id = String(settings.agent_id);
-                }
-                if ((!group.dialing_mode || group.dialing_mode === 'power') && settings?.dialing_mode) {
-                    group.dialing_mode = String(settings.dialing_mode);
-                }
-
-                grouped.set(campaignName, group);
-            });
-
-            const normalized = Array.from(grouped.values()).map((campaign) => {
-                const status = toCampaignStatus(campaign);
-                const connectRate = campaign.total_contacts > 0
-                    ? ((campaign.connected_calls / campaign.total_contacts) * 100).toFixed(1)
-                    : '0.0';
-                const progress = campaign.total_contacts > 0
-                    ? Math.round((campaign.dialed_contacts / campaign.total_contacts) * 100)
-                    : 0;
-                return {
-                    ...campaign,
-                    status,
-                    progress_percentage: progress,
-                    connect_rate: connectRate,
-                    assigned_agent_name: campaign.assigned_agent_id
-                        ? (agentNameById.get(String(campaign.assigned_agent_id)) || `Agent ${campaign.assigned_agent_id}`)
-                        : 'Not assigned',
-                };
-            });
-
-            setCampaigns(normalized.sort((a, b) => b.total_contacts - a.total_contacts));
+            if (!silent) {
+                setLoading(true);
+            }
+            const params = filter !== 'all' ? `?status=${filter}` : '';
+            const { data } = await api.get(`/campaigns/${params}`);
+            const rows = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
+            setCampaigns(rows);
         } catch (error) {
-            setCampaigns([]);
-            toast.error(error?.response?.data?.error || 'Failed to load campaigns');
+            const apiError = error?.response?.data?.error || error?.response?.data?.detail;
+            const status = error?.response?.status;
+            if (!silent) {
+                toast.error(apiError || (status ? `Failed to load campaigns (${status})` : 'Failed to load campaigns'));
+            }
         } finally {
-            setLoading(false);
+            if (!silent) {
+                setLoading(false);
+            }
         }
     };
 
     useEffect(() => {
         fetchCampaigns();
-    }, []);
+    }, [filter]);
 
-    const filters = ['all', 'active', 'draft', 'completed'];
-    const filteredCampaigns = useMemo(
-        () => (filter === 'all' ? campaigns : campaigns.filter((campaign) => campaign.status === filter)),
-        [campaigns, filter]
-    );
+    useEffect(() => {
+        const hasActive = campaigns.some((campaign) => campaign.status === 'active');
+        if (!hasActive) return undefined;
+
+        const timer = setInterval(async () => {
+            const activeIds = campaigns
+                .filter((campaign) => campaign.status === 'active')
+                .map((campaign) => campaign.id)
+                .filter(Boolean);
+            await Promise.allSettled(
+                activeIds.map((campaignId) => api.post(`/campaigns/${campaignId}/tick/`))
+            );
+            fetchCampaigns({ silent: true });
+        }, 5000);
+
+        return () => clearInterval(timer);
+    }, [campaigns]);
+
+    const filters = ['all', 'active', 'paused', 'draft', 'completed'];
 
     return (
         <Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Box>
                     <Typography variant="h4" fontWeight={700}>Campaigns</Typography>
-                    <Typography color="text.secondary" variant="body2">Manage your dialing campaigns</Typography>
+                    <Typography color="text.secondary" variant="body2">Queue-based outbound campaign control</Typography>
                 </Box>
                 <Button
                     variant="contained"
@@ -285,11 +267,11 @@ export default function CampaignsPage() {
                 <Grid container spacing={2}>
                     {Array.from({ length: 6 }).map((_, index) => (
                         <Grid item xs={12} sm={6} md={4} key={index}>
-                            <Card><CardContent><Skeleton height={200} /></CardContent></Card>
+                            <Card><CardContent><Skeleton height={220} /></CardContent></Card>
                         </Grid>
                     ))}
                 </Grid>
-            ) : filteredCampaigns.length === 0 ? (
+            ) : campaigns.length === 0 ? (
                 <Card>
                     <CardContent sx={{ textAlign: 'center', py: 8 }}>
                         <Campaign sx={{ fontSize: 64, color: '#374151', mb: 2 }} />
@@ -306,9 +288,9 @@ export default function CampaignsPage() {
                 </Card>
             ) : (
                 <Grid container spacing={2}>
-                    {filteredCampaigns.map((campaign) => (
+                    {campaigns.map((campaign) => (
                         <Grid item xs={12} sm={6} md={4} key={campaign.id}>
-                            <CampaignCard campaign={campaign} />
+                            <CampaignCard campaign={campaign} onAction={fetchCampaigns} />
                         </Grid>
                     ))}
                 </Grid>

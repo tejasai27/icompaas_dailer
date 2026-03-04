@@ -39,6 +39,26 @@ class CallStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
+class CampaignStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    ACTIVE = "active", "Active"
+    PAUSED = "paused", "Paused"
+    COMPLETED = "completed", "Completed"
+    ARCHIVED = "archived", "Archived"
+
+
+class CampaignDialingMode(models.TextChoices):
+    POWER = "power", "Power Dialer"
+    DYNAMIC = "dynamic", "Dynamic Dialer"
+
+
+class CampaignLeadStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    IN_PROGRESS = "in_progress", "In Progress"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+
+
 class AgentProfile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     display_name = models.CharField(max_length=120)
@@ -74,6 +94,43 @@ class LeadDialState(models.Model):
     is_completed = models.BooleanField(default=False)
 
 
+class Campaign(models.Model):
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=CampaignStatus.choices, default=CampaignStatus.DRAFT)
+    dialing_mode = models.CharField(
+        max_length=20,
+        choices=CampaignDialingMode.choices,
+        default=CampaignDialingMode.POWER,
+    )
+    assigned_agent = models.ForeignKey(
+        AgentProfile,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="campaigns",
+    )
+    agent_phone = models.CharField(max_length=20, blank=True)
+    caller_id = models.CharField(max_length=20, blank=True)
+    delay_between_calls = models.PositiveIntegerField(default=15)
+    max_retries = models.PositiveIntegerField(default=2)
+    metadata = models.JSONField(default=dict, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    paused_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    last_dispatch_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class CallSession(models.Model):
     public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     lead = models.ForeignKey(Lead, on_delete=models.PROTECT, related_name="calls")
@@ -87,6 +144,13 @@ class CallSession(models.Model):
     wrap_up_deadline = models.DateTimeField(null=True, blank=True)
     recording_url = models.URLField(blank=True)
     transcript_url = models.URLField(blank=True)
+    campaign = models.ForeignKey(
+        Campaign,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="calls",
+    )
     raw_provider_payload = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -95,6 +159,32 @@ class CallSession(models.Model):
             models.Index(fields=["status"]),
             models.Index(fields=["created_at"]),
             models.Index(fields=["provider", "provider_call_uuid"]),
+        ]
+
+
+class CampaignLead(models.Model):
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="campaign_leads")
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name="campaign_links")
+    queue_order = models.PositiveIntegerField(default=0)
+    status = models.CharField(
+        max_length=20,
+        choices=CampaignLeadStatus.choices,
+        default=CampaignLeadStatus.PENDING,
+    )
+    attempt_count = models.PositiveIntegerField(default=0)
+    last_outcome = models.CharField(max_length=32, blank=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    last_call = models.ForeignKey(CallSession, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("campaign", "lead")
+        indexes = [
+            models.Index(fields=["campaign", "status", "next_attempt_at"]),
+            models.Index(fields=["campaign", "queue_order", "id"]),
         ]
 
 

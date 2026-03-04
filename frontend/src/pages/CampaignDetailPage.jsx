@@ -10,7 +10,7 @@ import {
 import {
     ArrowBack, PlayArrow, Pause, Stop, BarChart, Phone,
     Person, CheckCircle, Cancel, Timer, History, Mic,
-    Edit, Refresh, Download
+    Edit, Refresh, Download, Dialpad, Delete, RestartAlt
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PieChart, Pie, Cell, BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
@@ -40,50 +40,201 @@ export default function CampaignDetailPage() {
     const [analytics, setAnalytics] = useState(null);
     const [contacts, setContacts] = useState([]);
     const [callLogs, setCallLogs] = useState([]);
+    const [timeline, setTimeline] = useState([]);
     const [tab, setTab] = useState(0);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
     const [selectedCall, setSelectedCall] = useState(null);
+    const [deletingContactId, setDeletingContactId] = useState(null);
+    const [cooldownSeconds, setCooldownSeconds] = useState(0);
+    const [campaignLoadError, setCampaignLoadError] = useState('');
+    const [clearingTimeline, setClearingTimeline] = useState(false);
+    const [syncingLogs, setSyncingLogs] = useState(false);
 
-    const fetchData = async () => {
+    const fetchData = async ({ silent = false } = {}) => {
+        if (!silent) {
+            setLoading(true);
+        }
         try {
-            const [campRes, analyticsRes, contactsRes, logsRes] = await Promise.all([
-                api.get(`/campaigns/${id}/`),
+            const campRes = await api.get(`/campaigns/${id}/`);
+            setCampaign(campRes.data);
+            setCampaignLoadError('');
+
+            const [analyticsRes, contactsRes, logsRes, timelineRes] = await Promise.allSettled([
                 api.get(`/campaigns/${id}/analytics/`),
                 api.get(`/contacts/?campaign=${id}`),
                 api.get(`/call-logs/?campaign=${id}`),
+                api.get(`/campaigns/${id}/timeline/?limit=250`),
             ]);
-            setCampaign(campRes.data);
-            setAnalytics(analyticsRes.data);
-            setContacts(contactsRes.data.results || contactsRes.data);
-            setCallLogs(logsRes.data.results || logsRes.data);
+
+            if (analyticsRes.status === 'fulfilled') {
+                setAnalytics(analyticsRes.value.data);
+            } else {
+                setAnalytics(null);
+            }
+
+            if (contactsRes.status === 'fulfilled') {
+                setContacts(contactsRes.value.data.results || contactsRes.value.data || []);
+            } else {
+                setContacts([]);
+            }
+
+            if (logsRes.status === 'fulfilled') {
+                setCallLogs(logsRes.value.data.results || logsRes.value.data || []);
+            } else {
+                setCallLogs([]);
+            }
+
+            if (timelineRes.status === 'fulfilled') {
+                setTimeline(timelineRes.value.data.results || []);
+            } else {
+                setTimeline([]);
+            }
         } catch (e) {
-            toast.error('Failed to load campaign');
+            const status = e?.response?.status;
+            if (status === 404) {
+                setCampaign(null);
+                setCampaignLoadError('Campaign not found');
+            } else {
+                if (!silent) {
+                    setCampaignLoadError('Failed to load campaign');
+                    toast.error(e?.response?.data?.error || 'Failed to load campaign');
+                }
+            }
         } finally {
-            setLoading(false);
+            if (!silent) {
+                setLoading(false);
+            }
         }
     };
 
     useEffect(() => { fetchData(); }, [id]);
 
-    // Auto-refresh when active
     useEffect(() => {
-        if (campaign?.status === 'active') {
-            const interval = setInterval(fetchData, 10000);
+        if (!campaign?.next_dispatch_at) {
+            setCooldownSeconds(Number(campaign?.cooldown_remaining_seconds || 0));
+            return undefined;
+        }
+
+        const computeRemaining = () => {
+            const ms = new Date(campaign.next_dispatch_at).getTime() - Date.now();
+            return ms > 0 ? Math.ceil(ms / 1000) : 0;
+        };
+
+        setCooldownSeconds(computeRemaining());
+        const timer = setInterval(() => {
+            setCooldownSeconds(computeRemaining());
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [campaign?.next_dispatch_at, campaign?.cooldown_remaining_seconds]);
+
+    // Auto-refresh while campaign is active or has in-progress queue state.
+    useEffect(() => {
+        if (campaign && (campaign.status === 'active' || Number(campaign.in_progress_contacts || 0) > 0)) {
+            const interval = setInterval(async () => {
+                try {
+                    await api.post(`/campaigns/${id}/tick/`);
+                } catch (_error) {
+                    // Ignore intermittent tick failures; fetch still runs to refresh UI.
+                }
+                fetchData({ silent: true });
+            }, 5000);
             return () => clearInterval(interval);
         }
-    }, [campaign?.status]);
+    }, [campaign?.status, campaign?.in_progress_contacts, id]);
 
     const handleAction = async (action) => {
         setActionLoading(true);
         try {
             await api.post(`/campaigns/${id}/${action}/`);
-            toast.success(`Campaign ${action}ed`);
-            fetchData();
+            const actionLabel = {
+                start: 'started',
+                resume: 'resumed',
+                pause: 'paused',
+                stop: 'stopped',
+            }[action] || 'updated';
+            toast.success(`Campaign ${actionLabel}`);
+            fetchData({ silent: true });
         } catch (e) {
             toast.error(e.response?.data?.error || `Failed to ${action}`);
         } finally {
             setActionLoading(false);
+        }
+    };
+
+    const handleStartFromFirst = async () => {
+        const ok = window.confirm('Start again from first contact? This resets current campaign queue progress.');
+        if (!ok) return;
+
+        setActionLoading(true);
+        try {
+            await api.post(`/campaigns/${id}/restart-from-first/`, { start_now: true });
+            toast.success('Campaign restarted from first contact');
+            fetchData({ silent: true });
+        } catch (e) {
+            toast.error(e?.response?.data?.error || 'Failed to restart campaign from first contact');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleRemoveContact = async (contact) => {
+        const contactName = contact?.name || contact?.full_name || `Contact #${contact?.id || ''}`;
+        const ok = window.confirm(`Delete "${contactName}" from this campaign?`);
+        if (!ok) return;
+
+        setDeletingContactId(contact.id);
+        try {
+            await api.post(`/campaigns/${id}/contacts/${contact.id}/remove/`);
+            toast.success('Contact removed from campaign');
+            fetchData({ silent: true });
+        } catch (e) {
+            const errorCode = e?.response?.data?.error;
+            if (errorCode === 'contact_call_in_progress') {
+                toast.error('This contact has an active call. Try again after call ends.');
+            } else {
+                toast.error(errorCode || 'Failed to remove contact');
+            }
+        } finally {
+            setDeletingContactId(null);
+        }
+    };
+
+    const handleClearTimeline = async () => {
+        const ok = window.confirm('Clear all timeline events for this campaign?');
+        if (!ok) return;
+
+        setClearingTimeline(true);
+        try {
+            const { data } = await api.post(`/campaigns/${id}/timeline/clear/`);
+            const clearedCount = Number(data?.cleared || 0);
+            toast.success(`Cleared ${clearedCount} timeline event${clearedCount === 1 ? '' : 's'}`);
+            setTimeline([]);
+            fetchData({ silent: true });
+        } catch (e) {
+            toast.error(e?.response?.data?.error || 'Failed to clear timeline');
+        } finally {
+            setClearingTimeline(false);
+        }
+    };
+
+    const handleSyncExotelLogs = async () => {
+        setSyncingLogs(true);
+        try {
+            const { data } = await api.post('/call-logs/sync/exotel/', {
+                campaign_id: Number(id),
+                limit: 100,
+                only_open: false,
+            });
+            const updated = Number(data?.updated || 0);
+            const failed = Number(data?.failed_count || 0);
+            toast.success(`Exotel sync complete. Updated: ${updated}${failed ? `, Failed: ${failed}` : ''}`);
+            fetchData({ silent: true });
+        } catch (e) {
+            toast.error(e?.response?.data?.error || 'Exotel sync failed');
+        } finally {
+            setSyncingLogs(false);
         }
     };
 
@@ -93,6 +244,17 @@ export default function CampaignDetailPage() {
         { name: 'No Answer', value: Math.max(0, analytics.total_calls - analytics.answered_calls - analytics.failed_calls), color: '#f59e0b' },
     ].filter(d => d.value > 0) : [];
 
+    const formatSeconds = (total) => {
+        const value = Math.max(0, Number(total || 0));
+        const minutes = Math.floor(value / 60);
+        const seconds = value % 60;
+        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    };
+    const activeCall = campaign?.active_call || null;
+    const waitingForPickup = activeCall?.stage === 'waiting_for_pickup';
+    const pickupLeftSeconds = Number(activeCall?.pickup_seconds_left || 0);
+    const lastCallStatus = String(campaign?.last_call_result?.display_status || '').toLowerCase();
+
     if (loading) return (
         <Box sx={{ p: 4, textAlign: 'center' }}>
             <CircularProgress sx={{ color: '#6366f1' }} />
@@ -100,7 +262,7 @@ export default function CampaignDetailPage() {
     );
 
     if (!campaign) return (
-        <Alert severity="error">Campaign not found</Alert>
+        <Alert severity="error">{campaignLoadError || 'Campaign not found'}</Alert>
     );
 
     const statusColor = STATUS_COLORS[campaign.status] || '#64748b';
@@ -139,6 +301,23 @@ export default function CampaignDetailPage() {
                             <Refresh />
                         </IconButton>
                     </Tooltip>
+                    <Button
+                        variant="outlined"
+                        startIcon={<Dialpad />}
+                        onClick={() => navigate(`/dial?campaign_id=${id}`)}
+                        sx={{ borderColor: 'rgba(99,102,241,0.4)', color: '#818cf8' }}
+                    >
+                        Open Dialer
+                    </Button>
+                    <Button
+                        variant="outlined"
+                        startIcon={<RestartAlt />}
+                        onClick={handleStartFromFirst}
+                        disabled={actionLoading || !campaign?.total_contacts}
+                        sx={{ borderColor: 'rgba(59,130,246,0.4)', color: '#60a5fa' }}
+                    >
+                        Start From First
+                    </Button>
                     {campaign.status === 'draft' && (
                         <Button
                             variant="contained"
@@ -186,6 +365,17 @@ export default function CampaignDetailPage() {
                             {campaign.dialed_contacts}/{campaign.total_contacts} contacts dialed
                         </Typography>
                     </Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        {campaign.active_call_in_progress
+                            ? waitingForPickup
+                                ? `Customer not picking yet. Waiting ${formatSeconds(pickupLeftSeconds)} before marking no-answer.`
+                                : `Agent is in call${activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.`
+                            : cooldownSeconds > 0
+                                ? (lastCallStatus === 'no-answer'
+                                    ? `Customer did not pick the call. Next call in ${formatSeconds(cooldownSeconds)}`
+                                    : `Next call in ${formatSeconds(cooldownSeconds)}`)
+                                : 'Waiting to dispatch next contact...'}
+                    </Typography>
                     <LinearProgress
                         value={campaign.progress_percentage}
                         variant="determinate"
@@ -225,6 +415,7 @@ export default function CampaignDetailPage() {
                     <Tab label={`Contacts (${contacts.length})`} />
                     <Tab label={`Call Logs (${callLogs.length})`} />
                     <Tab label="Analytics" />
+                    <Tab label={`Timeline (${timeline.length})`} />
                 </Tabs>
 
                 {/* Contacts tab */}
@@ -240,6 +431,7 @@ export default function CampaignDetailPage() {
                                     <TableCell>Status</TableCell>
                                     <TableCell>Retries</TableCell>
                                     <TableCell>Last Called</TableCell>
+                                    <TableCell align="right">Action</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -267,6 +459,20 @@ export default function CampaignDetailPage() {
                                                 {c.last_called_at ? new Date(c.last_called_at).toLocaleString() : '—'}
                                             </Typography>
                                         </TableCell>
+                                        <TableCell align="right">
+                                            <Tooltip title="Remove from campaign">
+                                                <span>
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() => handleRemoveContact(c)}
+                                                        disabled={deletingContactId === c.id}
+                                                        sx={{ color: '#ef4444' }}
+                                                    >
+                                                        <Delete fontSize="small" />
+                                                    </IconButton>
+                                                </span>
+                                            </Tooltip>
+                                        </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
@@ -276,67 +482,80 @@ export default function CampaignDetailPage() {
 
                 {/* Call Logs tab */}
                 {tab === 1 && (
-                    <TableContainer>
-                        <Table size="small">
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell>Contact</TableCell>
-                                    <TableCell>Agent</TableCell>
-                                    <TableCell>Status</TableCell>
-                                    <TableCell>Duration</TableCell>
-                                    <TableCell>Recording</TableCell>
-                                    <TableCell>Transcript</TableCell>
-                                    <TableCell>Time</TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {callLogs.length === 0 ? (
+                    <Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
+                            <Button
+                                variant="outlined"
+                                startIcon={syncingLogs ? <CircularProgress size={14} color="inherit" /> : <Refresh />}
+                                onClick={handleSyncExotelLogs}
+                                disabled={syncingLogs}
+                                sx={{ borderColor: 'rgba(99,102,241,0.4)', color: '#818cf8' }}
+                            >
+                                {syncingLogs ? 'Syncing...' : 'Sync Exotel'}
+                            </Button>
+                        </Box>
+                        <TableContainer>
+                            <Table size="small">
+                                <TableHead>
                                     <TableRow>
-                                        <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#64748b' }}>
-                                            No calls yet. Start the campaign to begin dialing.
-                                        </TableCell>
+                                        <TableCell>Contact</TableCell>
+                                        <TableCell>Agent</TableCell>
+                                        <TableCell>Status</TableCell>
+                                        <TableCell>Duration</TableCell>
+                                        <TableCell>Recording</TableCell>
+                                        <TableCell>Transcript</TableCell>
+                                        <TableCell>Time</TableCell>
                                     </TableRow>
-                                ) : callLogs.map(log => (
-                                    <TableRow key={log.id} hover
-                                        onClick={() => setSelectedCall(log)}
-                                        sx={{ cursor: 'pointer' }}>
-                                        <TableCell>
-                                            <Box>
-                                                <Typography fontWeight={500} fontSize="0.875rem">{log.contact_name}</Typography>
-                                                <Typography fontSize="0.75rem" color="text.secondary">{log.contact_phone}</Typography>
-                                            </Box>
-                                        </TableCell>
-                                        <TableCell><Typography fontSize="0.875rem">{log.agent_name}</Typography></TableCell>
-                                        <TableCell>
-                                            <Chip label={log.status} size="small"
-                                                sx={{ bgcolor: `${CALL_STATUS_COLORS[log.status] || '#64748b'}20`, color: CALL_STATUS_COLORS[log.status] || '#94a3b8' }} />
-                                        </TableCell>
-                                        <TableCell><Typography fontSize="0.875rem">{log.duration_formatted}</Typography></TableCell>
-                                        <TableCell>
-                                            {log.recording_url ? (
-                                                <IconButton size="small" href={log.recording_url} target="_blank"
-                                                    sx={{ color: '#6366f1' }} onClick={e => e.stopPropagation()}>
-                                                    <Download fontSize="small" />
-                                                </IconButton>
-                                            ) : <Typography fontSize="0.8rem" color="text.disabled">—</Typography>}
-                                        </TableCell>
-                                        <TableCell>
-                                            {log.transcript_status === 'completed' ? (
-                                                <Chip label="Available" size="small" sx={{ bgcolor: '#10b98125', color: '#10b981', fontSize: '0.7rem' }} />
-                                            ) : log.transcript_status === 'processing' ? (
-                                                <Chip label="Processing" size="small" sx={{ bgcolor: '#f59e0b25', color: '#f59e0b', fontSize: '0.7rem' }} />
-                                            ) : <Typography fontSize="0.8rem" color="text.disabled">—</Typography>}
-                                        </TableCell>
-                                        <TableCell>
-                                            <Typography fontSize="0.75rem" color="text.secondary">
-                                                {new Date(log.initiated_at).toLocaleString()}
-                                            </Typography>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
+                                </TableHead>
+                                <TableBody>
+                                    {callLogs.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#64748b' }}>
+                                                No calls yet. Start the campaign to begin dialing.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : callLogs.map(log => (
+                                        <TableRow key={log.id} hover
+                                            onClick={() => setSelectedCall(log)}
+                                            sx={{ cursor: 'pointer' }}>
+                                            <TableCell>
+                                                <Box>
+                                                    <Typography fontWeight={500} fontSize="0.875rem">{log.contact_name}</Typography>
+                                                    <Typography fontSize="0.75rem" color="text.secondary">{log.contact_phone}</Typography>
+                                                </Box>
+                                            </TableCell>
+                                            <TableCell><Typography fontSize="0.875rem">{log.agent_name}</Typography></TableCell>
+                                            <TableCell>
+                                                <Chip label={log.status} size="small"
+                                                    sx={{ bgcolor: `${CALL_STATUS_COLORS[log.status] || '#64748b'}20`, color: CALL_STATUS_COLORS[log.status] || '#94a3b8' }} />
+                                            </TableCell>
+                                            <TableCell><Typography fontSize="0.875rem">{log.duration_formatted}</Typography></TableCell>
+                                            <TableCell>
+                                                {log.recording_url ? (
+                                                    <IconButton size="small" href={log.recording_url} target="_blank"
+                                                        sx={{ color: '#6366f1' }} onClick={e => e.stopPropagation()}>
+                                                        <Download fontSize="small" />
+                                                    </IconButton>
+                                                ) : <Typography fontSize="0.8rem" color="text.disabled">—</Typography>}
+                                            </TableCell>
+                                            <TableCell>
+                                                {log.transcript_status === 'completed' ? (
+                                                    <Chip label="Available" size="small" sx={{ bgcolor: '#10b98125', color: '#10b981', fontSize: '0.7rem' }} />
+                                                ) : log.transcript_status === 'processing' ? (
+                                                    <Chip label="Processing" size="small" sx={{ bgcolor: '#f59e0b25', color: '#f59e0b', fontSize: '0.7rem' }} />
+                                                ) : <Typography fontSize="0.8rem" color="text.disabled">—</Typography>}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Typography fontSize="0.75rem" color="text.secondary">
+                                                    {new Date(log.initiated_at).toLocaleString()}
+                                                </Typography>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    </Box>
                 )}
 
                 {/* Analytics tab */}
@@ -388,6 +607,61 @@ export default function CampaignDetailPage() {
                                 </Grid>
                             </Grid>
                         </Grid>
+                    </CardContent>
+                )}
+
+                {tab === 3 && (
+                    <CardContent>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
+                            <Button
+                                variant="outlined"
+                                color="error"
+                                startIcon={clearingTimeline ? <CircularProgress size={14} color="inherit" /> : <Delete />}
+                                onClick={handleClearTimeline}
+                                disabled={clearingTimeline || timeline.length === 0}
+                                sx={{ borderColor: 'rgba(239,68,68,0.45)', color: '#f87171' }}
+                            >
+                                Clear Timeline
+                            </Button>
+                        </Box>
+                        {timeline.length === 0 ? (
+                            <Typography color="text.secondary">No timeline events yet.</Typography>
+                        ) : (
+                            <Box sx={{ display: 'grid', gap: 1 }}>
+                                {timeline.map((event, index) => (
+                                    <Box
+                                        key={`${event.at}-${event.type}-${index}`}
+                                        sx={{
+                                            p: 1.5,
+                                            borderRadius: 1.5,
+                                            bgcolor: 'rgba(99,102,241,0.08)',
+                                            border: '1px solid rgba(99,102,241,0.12)',
+                                        }}
+                                    >
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
+                                            <Typography fontWeight={600} fontSize="0.85rem">
+                                                {event.type}
+                                            </Typography>
+                                            <Typography color="text.secondary" fontSize="0.75rem">
+                                                {event.at ? new Date(event.at).toLocaleString() : '-'}
+                                            </Typography>
+                                        </Box>
+                                        <Typography fontSize="0.8rem" sx={{ mt: 0.25 }}>
+                                            {event.message || '-'}
+                                        </Typography>
+                                        {event.details && Object.keys(event.details).length > 0 ? (
+                                            <Typography
+                                                fontSize="0.72rem"
+                                                color="text.secondary"
+                                                sx={{ mt: 0.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                                            >
+                                                {JSON.stringify(event.details, null, 2)}
+                                            </Typography>
+                                        ) : null}
+                                    </Box>
+                                ))}
+                            </Box>
+                        )}
                     </CardContent>
                 )}
             </Card>

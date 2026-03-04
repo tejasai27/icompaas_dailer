@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from typing import Any
 
@@ -6,6 +7,17 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 from .base import DialRequest, DialResponse, TelephonyProvider, WebhookEvent
+
+logger = logging.getLogger("dialer.exotel")
+
+
+def _debug_exotel(tag: str, payload: Any) -> None:
+    try:
+        text = json.dumps(payload, default=str)
+    except Exception:
+        text = str(payload)
+    print(f"[EXOTEL_DEBUG] {tag}: {text}", flush=True)
+    logger.info("EXOTEL_DEBUG %s %s", tag, text)
 
 
 class ExotelProvider(TelephonyProvider):
@@ -28,6 +40,22 @@ class ExotelProvider(TelephonyProvider):
     def _auth(self) -> HTTPBasicAuth:
         return HTTPBasicAuth(self.api_key, self.api_token)
 
+    def _normalize_provider_url(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if text.startswith(("http://", "https://")):
+            return text
+        if text.startswith("//"):
+            return f"https:{text}"
+        if text.startswith("/"):
+            return f"https://{self.subdomain}{text}"
+        if text.startswith("v1/"):
+            return f"https://{self.subdomain}/{text}"
+        if text.startswith(self.subdomain):
+            return f"https://{text}"
+        return ""
+
     def initiate_call(self, request: DialRequest) -> DialResponse:
         if not self.configured:
             return DialResponse(provider_call_id="", accepted=False, raw={"error": "missing_exotel_configuration"})
@@ -41,6 +69,12 @@ class ExotelProvider(TelephonyProvider):
             ("To", request.to_number),
             ("CallerId", caller_id),
         ]
+
+        # Enable recording by default unless explicitly disabled via env.
+        record_calls_raw = str(os.getenv("EXOTEL_RECORD_CALLS", "1")).strip().lower()
+        record_calls = record_calls_raw in {"1", "true", "yes", "on"}
+        if record_calls:
+            payload.append(("Record", "true"))
 
         if request.callback_url:
             payload.extend(
@@ -59,6 +93,19 @@ class ExotelProvider(TelephonyProvider):
             payload.append(("TimeLimit", str(int(request.max_duration_seconds))))
 
         endpoint = f"{self.base_url}/Calls/connect.json"
+        _debug_exotel(
+            "initiate_call_request",
+            {
+                "endpoint": endpoint,
+                "from_number": request.from_number,
+                "to_number": request.to_number,
+                "caller_id": caller_id,
+                "callback_url": request.callback_url,
+                "metadata": request.metadata or {},
+                "max_duration_seconds": request.max_duration_seconds,
+                "payload": payload,
+            },
+        )
         try:
             response = requests.post(
                 endpoint,
@@ -73,6 +120,15 @@ class ExotelProvider(TelephonyProvider):
             raw_payload: Any = response.json()
         except ValueError:
             raw_payload = {"raw_text": response.text}
+
+        _debug_exotel(
+            "initiate_call_response",
+            {
+                "endpoint": endpoint,
+                "status_code": response.status_code,
+                "raw_payload": raw_payload,
+            },
+        )
 
         if response.status_code >= 400:
             return DialResponse(
@@ -96,14 +152,40 @@ class ExotelProvider(TelephonyProvider):
         )
 
     def parse_webhook(self, payload: dict) -> WebhookEvent:
+        _debug_exotel("webhook_payload", payload)
+
         provider_call_id = str(payload.get("CallSid") or payload.get("Sid") or "")
         call_data = payload.get("Call")
         if not provider_call_id and isinstance(call_data, dict):
-            provider_call_id = str(call_data.get("Sid") or "")
+            provider_call_id = str(
+                call_data.get("Sid")
+                or call_data.get("CallSid")
+                or call_data.get("UUID")
+                or call_data.get("CallUUID")
+                or call_data.get("id")
+                or ""
+            )
 
-        event_type = str(payload.get("EventType") or payload.get("CallStatus") or payload.get("Status") or "unknown")
+        event_type = str(
+            payload.get("EventType")
+            or payload.get("CallStatus")
+            or payload.get("Status")
+            or (call_data.get("EventType") if isinstance(call_data, dict) else "")
+            or (call_data.get("CallStatus") if isinstance(call_data, dict) else "")
+            or (call_data.get("Status") if isinstance(call_data, dict) else "")
+            or "unknown"
+        )
 
         amd_result = str(self._extract_answered_by(payload) or "").strip() or None
+
+        _debug_exotel(
+            "webhook_parsed_event",
+            {
+                "provider_call_id": provider_call_id,
+                "event_type": event_type,
+                "amd_result": amd_result,
+            },
+        )
 
         return WebhookEvent(
             provider_call_id=provider_call_id,
@@ -132,6 +214,13 @@ class ExotelProvider(TelephonyProvider):
             return {"ok": False, "error": "missing_configuration_or_call_id"}
 
         endpoint = f"{self.base_url}/Calls/{provider_call_id}.json"
+        _debug_exotel(
+            "fetch_call_request",
+            {
+                "endpoint": endpoint,
+                "provider_call_id": provider_call_id,
+            },
+        )
         try:
             response = requests.get(
                 endpoint,
@@ -145,6 +234,16 @@ class ExotelProvider(TelephonyProvider):
             raw_payload: Any = response.json()
         except ValueError:
             raw_payload = {"raw_text": response.text}
+
+        _debug_exotel(
+            "fetch_call_response",
+            {
+                "endpoint": endpoint,
+                "provider_call_id": provider_call_id,
+                "status_code": response.status_code,
+                "raw_payload": raw_payload,
+            },
+        )
 
         if response.status_code >= 400:
             return {
@@ -160,9 +259,110 @@ class ExotelProvider(TelephonyProvider):
 
         return {"ok": True, "call": call_data, "raw": raw_payload}
 
+    def fetch_call_recording(self, provider_call_id: str) -> dict:
+        if not self.configured or not provider_call_id:
+            return {"ok": False, "error": "missing_configuration_or_call_id"}
+
+        endpoints: list[str] = self._recording_endpoints_for_call(provider_call_id)
+        # In some Exotel flows recordings are attached to ParentCallSid.
+        parent_sid = ""
+        call_fetch = self.fetch_call(provider_call_id)
+        if call_fetch.get("ok") and isinstance(call_fetch.get("call"), dict):
+            parent_sid = str(call_fetch.get("call", {}).get("ParentCallSid") or "").strip()
+        if parent_sid and parent_sid != provider_call_id:
+            for endpoint in self._recording_endpoints_for_call(parent_sid):
+                if endpoint not in endpoints:
+                    endpoints.append(endpoint)
+        attempts: list[dict] = []
+
+        for endpoint in endpoints:
+            _debug_exotel(
+                "fetch_call_recording_request",
+                {
+                    "endpoint": endpoint,
+                    "provider_call_id": provider_call_id,
+                },
+            )
+            try:
+                response = requests.get(
+                    endpoint,
+                    auth=self._auth(),
+                    timeout=self.timeout_seconds,
+                )
+            except requests.RequestException as exc:
+                attempts.append({"endpoint": endpoint, "error": str(exc)})
+                continue
+
+            try:
+                raw_payload: Any = response.json()
+            except ValueError:
+                raw_payload = {"raw_text": response.text}
+
+            _debug_exotel(
+                "fetch_call_recording_response",
+                {
+                    "endpoint": endpoint,
+                    "provider_call_id": provider_call_id,
+                    "status_code": response.status_code,
+                    "raw_payload": raw_payload,
+                },
+            )
+
+            attempts.append({"endpoint": endpoint, "status_code": response.status_code})
+            if response.status_code >= 400:
+                continue
+
+            recording_url = self._extract_recording_url(raw_payload)
+            if recording_url:
+                return {
+                    "ok": True,
+                    "recording_url": recording_url,
+                    "endpoint": endpoint,
+                    "raw": raw_payload if isinstance(raw_payload, dict) else {"provider_response": raw_payload},
+                }
+
+        return {"ok": False, "error": "recording_not_found", "attempts": attempts[:10]}
+
+    def _recording_endpoints_for_call(self, call_sid: str) -> list[str]:
+        call_sid = str(call_sid or "").strip()
+        if not call_sid:
+            return []
+        return [
+            f"{self.base_url}/Calls/{call_sid}/recordings.json",
+            f"{self.base_url}/Calls/{call_sid}/Recordings.json",
+            f"{self.base_url}/Calls/{call_sid}/Recording.json",
+            f"{self.base_url}/Calls/{call_sid}.json?include_recordings=true",
+        ]
+
+    def _extract_recording_url(self, payload: object) -> str:
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                key_text = str(key).lower()
+                if isinstance(value, str):
+                    text = value.strip()
+                    if "record" in key_text or any(ext in text.lower() for ext in (".mp3", ".wav")) or "/record" in text.lower():
+                        normalized = self._normalize_provider_url(text)
+                        if normalized:
+                            return normalized
+                nested = self._extract_recording_url(value)
+                if nested:
+                    return nested
+            return ""
+        if isinstance(payload, list):
+            for item in payload:
+                nested = self._extract_recording_url(item)
+                if nested:
+                    return nested
+            return ""
+        return ""
+
     def _extract_answered_by(self, payload: dict) -> str | None:
         if "AnsweredBy" in payload:
             return str(payload.get("AnsweredBy"))
+
+        call_data = payload.get("Call")
+        if isinstance(call_data, dict) and "AnsweredBy" in call_data:
+            return str(call_data.get("AnsweredBy"))
 
         for key, value in payload.items():
             if "AnsweredBy" in str(key):

@@ -1,5 +1,14 @@
 from django.contrib import admin
-from .models import AgentProfile, CallDisposition, CallSession, CRMSyncLog, Lead, LeadDialState
+from .models import (
+    AgentProfile,
+    Campaign,
+    CampaignLead,
+    CallDisposition,
+    CallSession,
+    CRMSyncLog,
+    Lead,
+    LeadDialState,
+)
 
 
 @admin.register(AgentProfile)
@@ -22,9 +31,23 @@ class LeadDialStateAdmin(admin.ModelAdmin):
 
 @admin.register(CallSession)
 class CallSessionAdmin(admin.ModelAdmin):
-    list_display = ("public_id", "provider", "status", "lead", "agent", "created_at")
+    list_display = ("public_id", "provider", "status", "campaign", "lead", "agent", "created_at")
     list_filter = ("provider", "status")
     search_fields = ("provider_call_uuid",)
+
+
+@admin.register(Campaign)
+class CampaignAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "status", "dialing_mode", "assigned_agent", "created_at")
+    list_filter = ("status", "dialing_mode")
+    search_fields = ("name",)
+
+
+@admin.register(CampaignLead)
+class CampaignLeadAdmin(admin.ModelAdmin):
+    list_display = ("id", "campaign", "lead", "status", "attempt_count", "last_attempt_at")
+    list_filter = ("status", "campaign")
+    search_fields = ("campaign__name", "lead__full_name", "lead__phone_e164")
 
 
 @admin.register(CallDisposition)
