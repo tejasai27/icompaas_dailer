@@ -35,6 +35,7 @@ In `.env` set:
 - `EXOTEL_API_TOKEN=...`
 - `EXOTEL_SUBDOMAIN=api.in.exotel.com`
 - `EXOTEL_CALLER_ID=<your_exophone_or_verified_cli>`
+- `EXOTEL_MAX_CALL_DURATION_SECONDS=60`
 - `PUBLIC_WEBHOOK_BASE_URL=https://<your-ngrok-domain>`
 
 ## Make a Test Call
