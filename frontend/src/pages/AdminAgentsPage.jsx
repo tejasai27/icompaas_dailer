@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { request } from "../lib/api";
 
@@ -13,6 +13,18 @@ export default function AdminAgentsPage() {
   useEffect(() => {
     loadAgents();
   }, []);
+
+  const stats = useMemo(() => {
+    const available = agents.filter((agent) => agent.status === "available").length;
+    const busy = agents.filter((agent) => agent.status === "busy").length;
+    const wrapUp = agents.filter((agent) => agent.status === "wrap_up").length;
+    return {
+      total: agents.length,
+      available,
+      busy,
+      wrapUp,
+    };
+  }, [agents]);
 
   async function loadAgents() {
     setAgentsState("loading");
@@ -37,9 +49,7 @@ export default function AdminAgentsPage() {
         body: JSON.stringify({ status }),
       });
 
-      setAgents((current) =>
-        current.map((agent) => (agent.id === agentId ? { ...agent, status } : agent))
-      );
+      setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, status } : agent)));
       setMessage(`Agent ${agentId} set to ${status}.`);
     } catch (requestError) {
       setError(`Agent ${agentId}: ${requestError.message}`);
@@ -47,24 +57,48 @@ export default function AdminAgentsPage() {
   }
 
   return (
-    <div className="view-grid">
-      <section className="panel panel--hero">
+    <div className="view-grid page page--agents">
+      <section className="panel panel--hero panel--teal panel--agents-hero">
         <header className="panel-head">
-          <h2>Agents</h2>
+          <h2>Agent Control Board</h2>
           <div className="action-row">
-            <span className="muted">Live from AgentProfile table</span>
+            <span className="muted">Live from AgentProfile</span>
             <button className="btn btn-secondary" type="button" onClick={loadAgents}>
               Refresh
             </button>
           </div>
         </header>
 
+        <div className="kpi-strip kpi-strip--four">
+          <article className="metric-pill">
+            <span>Total Agents</span>
+            <strong>{stats.total}</strong>
+          </article>
+          <article className="metric-pill">
+            <span>Available</span>
+            <strong>{stats.available}</strong>
+          </article>
+          <article className="metric-pill">
+            <span>Busy</span>
+            <strong>{stats.busy}</strong>
+          </article>
+          <article className="metric-pill">
+            <span>Wrap-Up</span>
+            <strong>{stats.wrapUp}</strong>
+          </article>
+        </div>
+
         {agentsState === "loading" ? <p className="notice">Loading agents...</p> : null}
         {message ? <p className="notice">{message}</p> : null}
         {error ? <p className="notice notice--error">{error}</p> : null}
       </section>
 
-      <section className="panel">
+      <section className="panel panel--cobalt panel--agents-roster">
+        <header className="panel-head">
+          <h3>Agent Roster</h3>
+          <span className={`badge badge--${agentsState === "error" ? "error" : "success"}`}>{agentsState}</span>
+        </header>
+
         <div className="table-wrap">
           <table className="table">
             <thead>

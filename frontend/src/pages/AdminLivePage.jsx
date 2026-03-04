@@ -24,12 +24,14 @@ export default function AdminLivePage() {
     };
   }, [callLog]);
 
+  const recentEvents = callLog.slice(0, 8);
+
   return (
-    <div className="view-grid">
-      <section className="panel panel--hero">
+    <div className="view-grid page page--live">
+      <section className="panel panel--hero panel--teal panel--live-hero">
         <header className="panel-head">
           <h2>Live Monitor</h2>
-          <span className="muted">Realtime snapshot</span>
+          <span className="muted">Realtime operations snapshot</span>
         </header>
 
         <div className="kpi-grid">
@@ -52,9 +54,10 @@ export default function AdminLivePage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel panel--sand panel--live-board">
         <header className="panel-head">
           <h3>Agent State Board</h3>
+          <span className="muted">Routing readiness</span>
         </header>
 
         <div className="table-wrap">
@@ -76,6 +79,44 @@ export default function AdminLivePage() {
                   <td>{index + 1}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel panel--cobalt panel--live-events">
+        <header className="panel-head">
+          <h3>Recent Call Events</h3>
+          <span className="muted">Latest 8 entries</span>
+        </header>
+
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Lead</th>
+                <th>Status</th>
+                <th>Phone</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentEvents.length === 0 ? (
+                <tr>
+                  <td colSpan={4}>No events yet.</td>
+                </tr>
+              ) : (
+                recentEvents.map((entry) => (
+                  <tr key={`${entry.id}-${entry.createdAt}`}>
+                    <td>{entry.leadName || "-"}</td>
+                    <td>
+                      <span className={`badge badge--${entry.status || "idle"}`}>{entry.status || "-"}</span>
+                    </td>
+                    <td>{entry.phone || "-"}</td>
+                    <td>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "-"}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
