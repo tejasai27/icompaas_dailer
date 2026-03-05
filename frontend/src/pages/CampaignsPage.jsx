@@ -31,7 +31,7 @@ import toast from 'react-hot-toast';
 const STATUS_COLORS = {
     active: { bg: '#10b98125', text: '#10b981', label: 'Active' },
     paused: { bg: '#f59e0b25', text: '#f59e0b', label: 'Paused' },
-    completed: { bg: '#6366f125', text: '#6366f1', label: 'Completed' },
+    completed: { bg: '#0142a225', text: '#0142a2', label: 'Completed' },
     draft: { bg: '#64748b25', text: '#94a3b8', label: 'Draft' },
     archived: { bg: '#37415125', text: '#94a3b8', label: 'Archived' },
 };
@@ -49,10 +49,10 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
         <Card
             sx={{
                 transition: 'all 0.2s',
-                '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 8px 32px rgba(99,102,241,0.2)' },
+                '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 8px 32px rgba(1,66,162,0.2)' },
                 border: campaign.status === 'active'
                     ? '1px solid rgba(16,185,129,0.3)'
-                    : '1px solid rgba(99,102,241,0.1)',
+                    : '1px solid rgba(1,66,162,0.1)',
             }}
         >
             <CardContent>
@@ -62,7 +62,7 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
                             fontWeight={700}
                             noWrap
                             onClick={() => navigate(`/campaigns/${campaign.id}`)}
-                            sx={{ cursor: 'pointer', '&:hover': { color: '#6366f1' } }}
+                            sx={{ cursor: 'pointer', '&:hover': { color: '#0142a2' } }}
                         >
                             {campaign.name}
                         </Typography>
@@ -76,7 +76,7 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
                                 label={MODE_LABELS[campaign.dialing_mode] || campaign.dialing_mode}
                                 size="small"
                                 variant="outlined"
-                                sx={{ height: 20, fontSize: '0.7rem', borderColor: 'rgba(99,102,241,0.3)', color: '#818cf8' }}
+                                sx={{ height: 20, fontSize: '0.7rem', borderColor: 'rgba(1,66,162,0.3)', color: '#1a5bc4' }}
                             />
                         </Box>
                     </Box>
@@ -97,9 +97,9 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
                         sx={{
                             height: 6,
                             borderRadius: 3,
-                            bgcolor: 'rgba(99,102,241,0.1)',
+                            bgcolor: 'rgba(1,66,162,0.1)',
                             '& .MuiLinearProgress-bar': {
-                                bgcolor: campaign.status === 'active' ? '#10b981' : '#6366f1',
+                                bgcolor: campaign.status === 'active' ? '#10b981' : '#0142a2',
                                 borderRadius: 3,
                             },
                         }}
@@ -108,8 +108,8 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
 
                 <Grid container spacing={1} sx={{ mb: 2 }}>
                     <Grid item xs={4}>
-                        <Box sx={{ textAlign: 'center', p: 0.5, borderRadius: 1, bgcolor: 'rgba(99,102,241,0.05)' }}>
-                            <Typography fontSize="1.1rem" fontWeight={700} color="#6366f1">{campaign.total_contacts}</Typography>
+                        <Box sx={{ textAlign: 'center', p: 0.5, borderRadius: 1, bgcolor: 'rgba(1,66,162,0.05)' }}>
+                            <Typography fontSize="1.1rem" fontWeight={700} color="#0142a2">{campaign.total_contacts}</Typography>
                             <Typography variant="caption" color="text.secondary">Total</Typography>
                         </Box>
                     </Grid>
@@ -140,7 +140,7 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
                     ) : campaign.status === 'draft' || campaign.status === 'paused' ? (
                         <Button size="small" variant="contained" startIcon={<PlayArrow />}
                             onClick={() => onAction(campaign, campaign.status === 'draft' ? 'start' : 'resume')}
-                            sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)', flex: 1 }}>
+                            sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)', flex: 1 }}>
                             {campaign.status === 'draft' ? 'Start' : 'Resume'}
                         </Button>
                     ) : null}
@@ -150,7 +150,7 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
                         variant="outlined"
                         startIcon={<Dialpad />}
                         onClick={() => navigate(`/dial?campaign_id=${campaign.id}`)}
-                        sx={{ borderColor: 'rgba(99,102,241,0.5)', color: '#818cf8' }}
+                        sx={{ borderColor: 'rgba(1,66,162,0.5)', color: '#1a5bc4' }}
                     >
                         Dialer
                     </Button>
@@ -187,7 +187,7 @@ function CampaignRow({ campaign, onAction, onDelete, deleting }) {
             sx={{
                 border: campaign.status === 'active'
                     ? '1px solid rgba(16,185,129,0.3)'
-                    : '1px solid rgba(99,102,241,0.12)',
+                    : '1px solid rgba(1,66,162,0.12)',
             }}
         >
             <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
@@ -197,7 +197,7 @@ function CampaignRow({ campaign, onAction, onDelete, deleting }) {
                             fontWeight={700}
                             noWrap
                             onClick={() => navigate(`/campaigns/${campaign.id}`)}
-                            sx={{ cursor: 'pointer', '&:hover': { color: '#6366f1' } }}
+                            sx={{ cursor: 'pointer', '&:hover': { color: '#0142a2' } }}
                         >
                             {campaign.name}
                         </Typography>
@@ -215,7 +215,7 @@ function CampaignRow({ campaign, onAction, onDelete, deleting }) {
                         label={MODE_LABELS[campaign.dialing_mode] || campaign.dialing_mode}
                         size="small"
                         variant="outlined"
-                        sx={{ height: 22, fontSize: '0.72rem', borderColor: 'rgba(99,102,241,0.3)', color: '#818cf8' }}
+                        sx={{ height: 22, fontSize: '0.72rem', borderColor: 'rgba(1,66,162,0.3)', color: '#1a5bc4' }}
                     />
 
                     <Box sx={{ width: 180 }}>
@@ -233,9 +233,9 @@ function CampaignRow({ campaign, onAction, onDelete, deleting }) {
                             sx={{
                                 height: 6,
                                 borderRadius: 3,
-                                bgcolor: 'rgba(99,102,241,0.1)',
+                                bgcolor: 'rgba(1,66,162,0.1)',
                                 '& .MuiLinearProgress-bar': {
-                                    bgcolor: campaign.status === 'active' ? '#10b981' : '#6366f1',
+                                    bgcolor: campaign.status === 'active' ? '#10b981' : '#0142a2',
                                     borderRadius: 3,
                                 },
                             }}
@@ -257,7 +257,7 @@ function CampaignRow({ campaign, onAction, onDelete, deleting }) {
                     ) : campaign.status === 'draft' || campaign.status === 'paused' ? (
                         <Button size="small" variant="contained" startIcon={<PlayArrow />}
                             onClick={() => onAction(campaign, campaign.status === 'draft' ? 'start' : 'resume')}
-                            sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}>
+                            sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}>
                             {campaign.status === 'draft' ? 'Start' : 'Resume'}
                         </Button>
                     ) : null}
@@ -267,7 +267,7 @@ function CampaignRow({ campaign, onAction, onDelete, deleting }) {
                         variant="outlined"
                         startIcon={<Dialpad />}
                         onClick={() => navigate(`/dial?campaign_id=${campaign.id}`)}
-                        sx={{ borderColor: 'rgba(99,102,241,0.5)', color: '#818cf8' }}
+                        sx={{ borderColor: 'rgba(1,66,162,0.5)', color: '#1a5bc4' }}
                     >
                         Dialer
                     </Button>
@@ -400,12 +400,12 @@ export default function CampaignsPage() {
                             sx={{
                                 '& .MuiToggleButton-root': {
                                     color: '#94a3b8',
-                                    borderColor: 'rgba(99,102,241,0.25)',
+                                    borderColor: 'rgba(1,66,162,0.25)',
                                     px: 1.2,
                                 },
                                 '& .Mui-selected': {
-                                    bgcolor: 'rgba(99,102,241,0.18)',
-                                    color: '#818cf8',
+                                    bgcolor: 'rgba(1,66,162,0.18)',
+                                    color: '#1a5bc4',
                                 },
                             }}
                         >
@@ -421,7 +421,7 @@ export default function CampaignsPage() {
                         variant="contained"
                         startIcon={<Add />}
                         onClick={() => navigate('/campaigns/new')}
-                        sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                        sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
                     >
                         Create Campaign
                     </Button>
@@ -436,9 +436,9 @@ export default function CampaignsPage() {
                         onClick={() => setFilter(value)}
                         variant={filter === value ? 'filled' : 'outlined'}
                         sx={{
-                            bgcolor: filter === value ? 'rgba(99,102,241,0.2)' : 'transparent',
-                            color: filter === value ? '#818cf8' : '#94a3b8',
-                            borderColor: filter === value ? '#6366f1' : 'rgba(99,102,241,0.3)',
+                            bgcolor: filter === value ? 'rgba(1,66,162,0.2)' : 'transparent',
+                            color: filter === value ? '#1a5bc4' : '#94a3b8',
+                            borderColor: filter === value ? '#0142a2' : 'rgba(1,66,162,0.3)',
                             cursor: 'pointer',
                         }}
                     />

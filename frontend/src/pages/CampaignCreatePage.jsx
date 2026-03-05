@@ -48,11 +48,11 @@ function DialingModeStep({ mode, onChange }) {
                                 p: 3,
                                 borderRadius: 3,
                                 cursor: item.available ? 'pointer' : 'not-allowed',
-                                border: `2px solid ${mode === item.id ? '#6366f1' : 'rgba(99,102,241,0.15)'}`,
-                                bgcolor: mode === item.id ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)',
+                                border: `2px solid ${mode === item.id ? '#0142a2' : 'rgba(1,66,162,0.15)'}`,
+                                bgcolor: mode === item.id ? 'rgba(1,66,162,0.1)' : 'rgba(255,255,255,0.02)',
                                 opacity: item.available ? 1 : 0.6,
                                 transition: 'all 0.2s',
-                                '&:hover': { borderColor: item.available ? 'rgba(99,102,241,0.4)' : 'rgba(99,102,241,0.15)' },
+                                '&:hover': { borderColor: item.available ? 'rgba(1,66,162,0.4)' : 'rgba(1,66,162,0.15)' },
                             }}
                         >
                             {!item.available ? (
@@ -206,7 +206,7 @@ function AddContactsStep({
             <Tabs
                 value={inputMode}
                 onChange={(_, value) => setInputMode(value)}
-                sx={{ mb: 2, '& .MuiTabs-indicator': { bgcolor: '#6366f1' }, '& .MuiTab-root': { textTransform: 'none' } }}
+                sx={{ mb: 2, '& .MuiTabs-indicator': { bgcolor: '#0142a2' }, '& .MuiTab-root': { textTransform: 'none' } }}
             >
                 <Tab value="csv" label="CSV Upload" />
                 <Tab value="manual" label="Manual Leads" />
@@ -216,16 +216,16 @@ function AddContactsStep({
                 <Box
                     {...getRootProps()}
                     sx={{
-                        border: `2px dashed ${isDragActive ? '#6366f1' : 'rgba(99,102,241,0.35)'}`,
+                        border: `2px dashed ${isDragActive ? '#0142a2' : 'rgba(1,66,162,0.35)'}`,
                         borderRadius: 3,
                         p: 5,
                         textAlign: 'center',
                         cursor: 'pointer',
-                        bgcolor: isDragActive ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.03)',
+                        bgcolor: isDragActive ? 'rgba(1,66,162,0.08)' : 'rgba(1,66,162,0.03)',
                     }}
                 >
                     <input {...getInputProps()} />
-                    <CloudUpload sx={{ fontSize: 54, color: '#6366f1', mb: 1 }} />
+                    <CloudUpload sx={{ fontSize: 54, color: '#0142a2', mb: 1 }} />
                     <Typography variant="body1" fontWeight={600} mb={1}>
                         {isDragActive ? 'Drop CSV here' : 'Drag & drop CSV file here'}
                     </Typography>
@@ -256,7 +256,7 @@ function ReviewStep({ dialingMode, details, inputMode, csvFile, manualLeadsText,
             <Typography variant="h6" fontWeight={600} mb={2}>Review</Typography>
             <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
-                    <Card variant="outlined" sx={{ borderColor: 'rgba(99,102,241,0.2)' }}>
+                    <Card variant="outlined" sx={{ borderColor: 'rgba(1,66,162,0.2)' }}>
                         <CardContent>
                             <Typography variant="subtitle2" color="text.secondary">Campaign</Typography>
                             <Typography variant="h6" fontWeight={700}>{details.name || '-'}</Typography>
@@ -271,7 +271,7 @@ function ReviewStep({ dialingMode, details, inputMode, csvFile, manualLeadsText,
                     </Card>
                 </Grid>
                 <Grid item xs={12} md={6}>
-                    <Card variant="outlined" sx={{ borderColor: 'rgba(99,102,241,0.2)' }}>
+                    <Card variant="outlined" sx={{ borderColor: 'rgba(1,66,162,0.2)' }}>
                         <CardContent>
                             <Typography variant="subtitle2" color="text.secondary">Contacts</Typography>
                             <Typography variant="h6" fontWeight={700}>
@@ -496,7 +496,7 @@ export default function CampaignCreatePage() {
                         )}
                     </Box>
 
-                    <Divider sx={{ my: 3, borderColor: 'rgba(99,102,241,0.1)' }} />
+                    <Divider sx={{ my: 3, borderColor: 'rgba(1,66,162,0.1)' }} />
 
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Button
@@ -514,7 +514,7 @@ export default function CampaignCreatePage() {
                                 disabled={!canProceed() || submitting}
                                 onClick={() => setActiveStep((step) => step + 1)}
                                 endIcon={<ArrowForward />}
-                                sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                                sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
                             >
                                 Next
                             </Button>
@@ -533,7 +533,7 @@ export default function CampaignCreatePage() {
                                 <Button
                                     variant="outlined"
                                     onClick={() => createdCampaign?.id && navigate(`/campaigns/${createdCampaign.id}`)}
-                                    sx={{ borderColor: '#6366f1', color: '#818cf8' }}
+                                    sx={{ borderColor: '#0142a2', color: '#1a5bc4' }}
                                     disabled={!createdCampaign?.id}
                                 >
                                     Open Campaign
@@ -550,7 +550,7 @@ export default function CampaignCreatePage() {
                                 <Button
                                     variant="contained"
                                     onClick={() => createdCampaign?.id && navigate(`/dial?campaign_id=${createdCampaign.id}`)}
-                                    sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                                    sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
                                     disabled={!createdCampaign?.id}
                                 >
                                     Open Dialer

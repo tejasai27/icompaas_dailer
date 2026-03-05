@@ -342,7 +342,7 @@ export default function DialPage() {
                 {campaignId ? (
                     <Chip
                         label={`Campaign #${campaignId}`}
-                        sx={{ mt: 1, bgcolor: 'rgba(99,102,241,0.2)', color: '#818cf8' }}
+                        sx={{ mt: 1, bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }}
                     />
                 ) : null}
             </Box>
@@ -354,7 +354,7 @@ export default function DialPage() {
                             value={tab}
                             onChange={(_, value) => setTab(value)}
                             sx={{
-                                borderBottom: '1px solid rgba(99,102,241,0.12)',
+                                borderBottom: '1px solid rgba(1,66,162,0.12)',
                                 '& .MuiTab-root': { textTransform: 'none' },
                             }}
                         >
@@ -395,7 +395,7 @@ export default function DialPage() {
                                                 key={key}
                                                 variant="outlined"
                                                 onClick={() => appendKey(key)}
-                                                sx={{ height: 52, fontSize: '1.15rem', borderColor: 'rgba(99,102,241,0.28)' }}
+                                                sx={{ height: 52, fontSize: '1.15rem', borderColor: 'rgba(1,66,162,0.28)' }}
                                             >
                                                 {key}
                                             </Button>
@@ -559,7 +559,7 @@ export default function DialPage() {
                                         </Box>
                                         <Box sx={{ display: 'grid', gap: 0.75, maxHeight: 180, overflowY: 'auto' }}>
                                             {campaignQueue.slice(0, 8).map((item) => (
-                                                <Box key={item.id} sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(99,102,241,0.08)' }}>
+                                                <Box key={item.id} sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(1,66,162,0.08)' }}>
                                                     <Typography fontSize="0.8rem" fontWeight={600}>
                                                         {item.contact_name}
                                                     </Typography>
@@ -623,13 +623,13 @@ export default function DialPage() {
                             <Typography variant="h6" fontWeight={600}>
                                 Last Call
                             </Typography>
-                            <Divider sx={{ my: 1.5, borderColor: 'rgba(99,102,241,0.12)' }} />
+                            <Divider sx={{ my: 1.5, borderColor: 'rgba(1,66,162,0.12)' }} />
                             {lastCall ? (
                                 <Box sx={{ display: 'grid', gap: 1 }}>
                                     <Chip
                                         size="small"
                                         label={lastCall.status}
-                                        sx={{ width: 'fit-content', bgcolor: 'rgba(99,102,241,0.2)', color: '#818cf8' }}
+                                        sx={{ width: 'fit-content', bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }}
                                     />
                                     <Typography variant="body2">
                                         <strong>ID:</strong> {lastCall.id}

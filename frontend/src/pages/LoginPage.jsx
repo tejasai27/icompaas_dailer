@@ -32,45 +32,49 @@ export default function LoginPage() {
     return (
         <Box sx={{
             minHeight: '100vh',
-            background: 'radial-gradient(ellipse at 20% 50%, rgba(99,102,241,0.15) 0%, transparent 60%), radial-gradient(ellipse at 80% 50%, rgba(16,185,129,0.1) 0%, transparent 60%), #0f0f1a',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'linear-gradient(135deg, #0142a2 0%, #1a5bc4 40%, #0d9488 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             p: 2,
+            position: 'relative',
+            overflow: 'hidden',
         }}>
-            {/* Animated orbs */}
+            {/* Background decorations */}
             <Box sx={{
-                position: 'fixed', top: '20%', left: '10%',
-                width: 300, height: 300, borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(99,102,241,0.1), transparent)',
-                filter: 'blur(40px)', pointerEvents: 'none',
-                animation: 'pulse 4s ease-in-out infinite',
-                '@keyframes pulse': {
-                    '0%, 100%': { opacity: 0.6, transform: 'scale(1)' },
-                    '50%': { opacity: 1, transform: 'scale(1.1)' },
-                }
+                position: 'absolute', top: '-10%', right: '-5%',
+                width: 400, height: 400, borderRadius: '50%',
+                background: 'rgba(255,255,255,0.05)',
+                pointerEvents: 'none',
+            }} />
+            <Box sx={{
+                position: 'absolute', bottom: '-15%', left: '-8%',
+                width: 500, height: 500, borderRadius: '50%',
+                background: 'rgba(255,255,255,0.04)',
+                pointerEvents: 'none',
             }} />
 
             <Card sx={{
                 width: '100%', maxWidth: 420,
-                bgcolor: 'rgba(26,26,46,0.9)',
-                backdropFilter: 'blur(20px)',
-                border: '1px solid rgba(99,102,241,0.2)',
-                boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
+                bgcolor: '#f0f4f9',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+                border: 'none',
+                borderRadius: 3,
+                position: 'relative',
+                zIndex: 1,
             }}>
                 <CardContent sx={{ p: 4 }}>
                     {/* Logo */}
                     <Box sx={{ textAlign: 'center', mb: 4 }}>
                         <Box sx={{
-                            width: 64, height: 64, borderRadius: 3, mx: 'auto', mb: 2,
-                            background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+                            width: 64, height: 64, borderRadius: '16px', mx: 'auto', mb: 2,
+                            background: '#0142a2',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            boxShadow: '0 0 30px rgba(99,102,241,0.4)',
+                            boxShadow: '0 8px 24px rgba(1,66,162,0.35)',
                         }}>
                             <Phone sx={{ fontSize: 30, color: '#fff' }} />
                         </Box>
-                        <Typography variant="h4" fontWeight={700} sx={{
-                            background: 'linear-gradient(90deg, #6366f1, #818cf8)',
-                            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-                        }}>
+                        <Typography variant="h5" fontWeight={800} sx={{ color: '#0142a2', letterSpacing: '-0.02em' }}>
                             PowerDialer
                         </Typography>
                         <Typography color="text.secondary" variant="body2" mt={0.5}>
@@ -78,9 +82,11 @@ export default function LoginPage() {
                         </Typography>
                     </Box>
 
-                    <Typography variant="h6" fontWeight={600} mb={0.5}>Sign in</Typography>
+                    <Typography variant="h6" fontWeight={700} mb={0.5} color="text.primary">
+                        Sign in to your account
+                    </Typography>
                     <Typography variant="body2" color="text.secondary" mb={3}>
-                        Enter your credentials to access the dialer
+                        Enter your credentials to continue
                     </Typography>
 
                     <form onSubmit={handleSubmit}>
@@ -90,7 +96,11 @@ export default function LoginPage() {
                             value={form.username}
                             onChange={e => setForm({ ...form, username: e.target.value })}
                             InputProps={{
-                                startAdornment: <InputAdornment position="start"><Person sx={{ color: '#64748b', fontSize: 18 }} /></InputAdornment>
+                                startAdornment: (
+                                    <InputAdornment position="start">
+                                        <Person sx={{ color: '#64748b', fontSize: 20 }} />
+                                    </InputAdornment>
+                                )
                             }}
                             sx={{ mb: 2 }}
                             required
@@ -102,7 +112,11 @@ export default function LoginPage() {
                             value={form.password}
                             onChange={e => setForm({ ...form, password: e.target.value })}
                             InputProps={{
-                                startAdornment: <InputAdornment position="start"><Lock sx={{ color: '#64748b', fontSize: 18 }} /></InputAdornment>,
+                                startAdornment: (
+                                    <InputAdornment position="start">
+                                        <Lock sx={{ color: '#64748b', fontSize: 20 }} />
+                                    </InputAdornment>
+                                ),
                                 endAdornment: (
                                     <InputAdornment position="end">
                                         <IconButton size="small" onClick={() => setShowPw(!showPw)}>
@@ -122,29 +136,38 @@ export default function LoginPage() {
                             disabled={loading}
                             sx={{
                                 py: 1.5,
-                                background: 'linear-gradient(135deg, #6366f1, #818cf8)',
-                                '&:hover': { background: 'linear-gradient(135deg, #4f46e5, #6366f1)' },
-                                boxShadow: '0 4px 15px rgba(99,102,241,0.4)',
+                                bgcolor: '#0142a2',
+                                '&:hover': { bgcolor: '#1a5bc4' },
+                                boxShadow: '0 4px 14px rgba(1,66,162,0.35)',
+                                borderRadius: 2,
+                                fontSize: '0.95rem',
+                                fontWeight: 700,
                             }}
                         >
-                            {loading ? <CircularProgress size={22} color="inherit" /> : 'Sign In'}
+                            {loading ? <CircularProgress size={22} sx={{ color: '#fff' }} /> : 'Sign In'}
                         </Button>
                     </form>
 
-                    <Divider sx={{ my: 3, borderColor: 'rgba(99,102,241,0.2)' }}>
-                        <Typography variant="caption" color="text.secondary">Demo Credentials</Typography>
+                    <Divider sx={{ my: 3, borderColor: '#e2e8f0' }}>
+                        <Typography variant="caption" color="text.secondary">Quick Access</Typography>
                     </Divider>
 
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                         {[
-                            { label: 'Admin', username: 'admin', password: 'admin123' },
-                            { label: 'Agent', username: 'agent1', password: 'agent123' },
+                            { label: 'Admin Demo', username: 'admin', password: 'admin123' },
+                            { label: 'Agent Demo', username: 'agent1', password: 'agent123' },
                         ].map(({ label, username, password }) => (
                             <Button
                                 key={label}
                                 size="small"
                                 variant="outlined"
-                                sx={{ borderColor: 'rgba(99,102,241,0.3)', color: '#818cf8', fontSize: '0.75rem' }}
+                                sx={{
+                                    borderColor: '#e2e8f0',
+                                    color: '#64748b',
+                                    fontSize: '0.78rem',
+                                    borderRadius: 2,
+                                    '&:hover': { borderColor: '#0142a2', color: '#0142a2', bgcolor: 'rgba(1,66,162,0.04)' },
+                                }}
                                 onClick={() => setForm({ username, password })}
                             >
                                 {label}

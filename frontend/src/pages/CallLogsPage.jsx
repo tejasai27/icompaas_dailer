@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 
 const CALL_COLORS = {
     answered: '#10b981', 'no-answer': '#f59e0b', busy: '#f59e0b',
-    failed: '#ef4444', completed: '#6366f1', initiated: '#3b82f6', cancelled: '#64748b'
+    failed: '#ef4444', completed: '#0142a2', initiated: '#3b82f6', cancelled: '#64748b'
 };
 
 export default function CallLogsPage() {
@@ -78,7 +78,7 @@ export default function CallLogsPage() {
                     startIcon={<Sync />}
                     onClick={syncFromExotel}
                     disabled={syncing}
-                    sx={{ borderColor: 'rgba(99,102,241,0.4)', color: '#818cf8' }}
+                    sx={{ borderColor: 'rgba(1,66,162,0.4)', color: '#1a5bc4' }}
                 >
                     {syncing ? 'Syncing...' : 'Sync Exotel'}
                 </Button>
@@ -151,7 +151,7 @@ export default function CallLogsPage() {
                                         {log.recording_url ? (
                                             <Tooltip title="Download Recording">
                                                 <IconButton size="small" href={log.recording_url} target="_blank"
-                                                    sx={{ color: '#6366f1' }} onClick={e => e.stopPropagation()}>
+                                                    sx={{ color: '#0142a2' }} onClick={e => e.stopPropagation()}>
                                                     <Download fontSize="small" />
                                                 </IconButton>
                                             </Tooltip>
@@ -164,7 +164,7 @@ export default function CallLogsPage() {
                                         ) : log.recording_url && log.transcript_status !== 'processing' ? (
                                             <Tooltip title="Run Transcription">
                                                 <IconButton size="small" onClick={e => { e.stopPropagation(); triggerTranscription(log.id); }}
-                                                    sx={{ color: '#6366f1' }}>
+                                                    sx={{ color: '#0142a2' }}>
                                                     <Mic fontSize="small" />
                                                 </IconButton>
                                             </Tooltip>
@@ -184,7 +184,7 @@ export default function CallLogsPage() {
                 {totalPages > 1 && (
                     <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
                         <Pagination count={totalPages} page={page} onChange={(_, v) => setPage(v)}
-                            sx={{ '& .MuiPaginationItem-root': { color: '#94a3b8' }, '& .Mui-selected': { bgcolor: 'rgba(99,102,241,0.2)', color: '#818cf8' } }} />
+                            sx={{ '& .MuiPaginationItem-root': { color: '#94a3b8' }, '& .Mui-selected': { bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' } }} />
                     </Box>
                 )}
             </Card>
@@ -192,7 +192,7 @@ export default function CallLogsPage() {
             {/* Detail dialog */}
             {selected && (
                 <Dialog open onClose={() => setSelected(null)} maxWidth="sm" fullWidth
-                    PaperProps={{ sx: { bgcolor: '#1a1a2e', border: '1px solid rgba(99,102,241,0.2)' } }}>
+                    PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}>
                     <DialogTitle>
                         <Box>
                             <Typography fontWeight={700}>{selected.contact_name}</Typography>
@@ -226,7 +226,7 @@ export default function CallLogsPage() {
                         )}
                         <Box sx={{ mt: 2 }}>
                             <Typography variant="subtitle2" fontWeight={600} mb={1}>Notes</Typography>
-                            <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.05)' }}>
+                            <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.05)' }}>
                                 <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
                                     {selected.agent_notes || 'No notes added.'}
                                 </Typography>
@@ -235,7 +235,7 @@ export default function CallLogsPage() {
                         {selected.transcript && (
                             <Box sx={{ mt: 2 }}>
                                 <Typography variant="subtitle2" fontWeight={600} mb={1}>📝 Transcript</Typography>
-                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.05)', maxHeight: 300, overflow: 'auto' }}>
+                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.05)', maxHeight: 300, overflow: 'auto' }}>
                                     <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
                                         {selected.transcript}
                                     </Typography>

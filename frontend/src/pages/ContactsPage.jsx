@@ -10,7 +10,7 @@ import toast from 'react-hot-toast';
 
 const STATUS_COLORS = {
     pending: '#64748b', calling: '#3b82f6', answered: '#10b981',
-    'no-answer': '#f59e0b', no_answer: '#f59e0b', busy: '#f59e0b', failed: '#ef4444', completed: '#6366f1'
+    'no-answer': '#f59e0b', no_answer: '#f59e0b', busy: '#f59e0b', failed: '#ef4444', completed: '#0142a2'
 };
 const PAGE_SIZE = 20;
 
@@ -315,7 +315,7 @@ export default function ContactsPage() {
                         variant="contained"
                         startIcon={<Add />}
                         onClick={() => setCreateOpen(true)}
-                        sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                        sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
                     >
                         Create Contact
                     </Button>
@@ -434,7 +434,7 @@ export default function ContactsPage() {
                 {count > PAGE_SIZE && (
                     <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
                         <Pagination count={Math.ceil(count / PAGE_SIZE)} page={page} onChange={(_, v) => setPage(v)}
-                            sx={{ '& .MuiPaginationItem-root': { color: '#94a3b8' }, '& .Mui-selected': { bgcolor: 'rgba(99,102,241,0.2)', color: '#818cf8' } }} />
+                            sx={{ '& .MuiPaginationItem-root': { color: '#94a3b8' }, '& .Mui-selected': { bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' } }} />
                     </Box>
                 )}
             </Card>
@@ -444,7 +444,7 @@ export default function ContactsPage() {
                 onClose={() => !creating && setCreateOpen(false)}
                 fullWidth
                 maxWidth="sm"
-                PaperProps={{ sx: { bgcolor: '#1a1a2e', border: '1px solid rgba(99,102,241,0.2)' } }}
+                PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}
             >
                 <DialogTitle>Create Contact</DialogTitle>
                 <DialogContent>
@@ -494,7 +494,7 @@ export default function ContactsPage() {
                         variant="contained"
                         onClick={handleCreateContact}
                         disabled={creating}
-                        sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                        sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
                     >
                         {creating ? 'Creating...' : 'Create'}
                     </Button>
@@ -506,7 +506,7 @@ export default function ContactsPage() {
                 onClose={() => !updating && setEditOpen(false)}
                 fullWidth
                 maxWidth="sm"
-                PaperProps={{ sx: { bgcolor: '#1a1a2e', border: '1px solid rgba(99,102,241,0.2)' } }}
+                PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}
             >
                 <DialogTitle>Update Contact</DialogTitle>
                 <DialogContent>
@@ -556,7 +556,7 @@ export default function ContactsPage() {
                         variant="contained"
                         onClick={handleUpdateContact}
                         disabled={updating}
-                        sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                        sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
                     >
                         {updating ? 'Updating...' : 'Update'}
                     </Button>

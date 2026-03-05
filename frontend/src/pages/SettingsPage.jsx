@@ -6,6 +6,7 @@ import {
 import { Phone, Refresh, CloudUpload, DeleteOutline } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { resolveMediaUrl } from '../lib/mediaUrl';
 
 export default function SettingsPage() {
     const [waitAudio, setWaitAudio] = useState({
@@ -102,7 +103,7 @@ export default function SettingsPage() {
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 2 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Phone sx={{ color: '#6366f1' }} />
+                                    <Phone sx={{ color: '#0142a2' }} />
                                     <Typography variant="subtitle1" fontWeight={700}>Exotel Wait Audio</Typography>
                                 </Box>
                                 <Button
@@ -154,7 +155,7 @@ export default function SettingsPage() {
                                 </Grid>
                             </Grid>
 
-                            <Divider sx={{ my: 2, borderColor: 'rgba(99,102,241,0.1)' }} />
+                            <Divider sx={{ my: 2, borderColor: 'rgba(1,66,162,0.1)' }} />
 
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                                 <Typography variant="body2" color="text.secondary">Current source:</Typography>
@@ -183,7 +184,7 @@ export default function SettingsPage() {
 
                             {waitAudio.wait_url ? (
                                 <Box sx={{ mt: 1 }}>
-                                    <audio controls src={waitAudio.wait_url} style={{ width: '100%' }} />
+                                    <audio controls src={resolveMediaUrl(waitAudio.wait_url)} style={{ width: '100%' }} />
                                 </Box>
                             ) : null}
                         </CardContent>

@@ -274,7 +274,7 @@ export default function DialCallPage() {
                                 <Chip
                                     size="small"
                                     label={call?.status || '-'}
-                                    sx={{ mt: 1.5, bgcolor: 'rgba(99,102,241,0.2)', color: '#818cf8' }}
+                                    sx={{ mt: 1.5, bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }}
                                 />
                                 <Typography variant="h3" fontWeight={700} sx={{ mt: 2.5, mb: 2 }}>
                                     {formatSeconds(elapsedSeconds)}

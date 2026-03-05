@@ -14,6 +14,7 @@ import { ArrowBack, GraphicEq, Mic } from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { resolveMediaUrl } from '../lib/mediaUrl';
 
 function formatTime(seconds) {
     const total = Math.max(0, Number(seconds || 0));
@@ -89,7 +90,7 @@ export default function RecordingTranscriptPage() {
         const start = Number(segment?.start || 0);
         audioRef.current.currentTime = start;
         setCurrentTime(start);
-        audioRef.current.play().catch(() => {});
+        audioRef.current.play().catch(() => { });
     };
 
     if (loading) {
@@ -167,7 +168,7 @@ export default function RecordingTranscriptPage() {
                                             p: 1.2,
                                             borderRadius: 1.5,
                                             cursor: 'pointer',
-                                            bgcolor: active ? 'rgba(16,185,129,0.2)' : 'rgba(99,102,241,0.08)',
+                                            bgcolor: active ? 'rgba(16,185,129,0.2)' : 'rgba(1,66,162,0.08)',
                                             border: active ? '1px solid rgba(16,185,129,0.5)' : '1px solid transparent',
                                             transition: 'all 0.15s ease',
                                             display: 'flex',
@@ -178,7 +179,7 @@ export default function RecordingTranscriptPage() {
                                         <Typography variant="caption" sx={{ minWidth: 52, color: active ? '#10b981' : '#94a3b8' }}>
                                             {formatTime(segment.start)}
                                         </Typography>
-                                        <Typography variant="body2" sx={{ color: active ? '#ecfdf5' : 'text.primary' }}>
+                                        <Typography variant="body2" sx={{ color: active ? '#212322ff' : 'text.primary' }}>
                                             {segment.text}
                                         </Typography>
                                         {active ? <GraphicEq sx={{ color: '#10b981', fontSize: 18, ml: 'auto' }} /> : null}
@@ -187,7 +188,7 @@ export default function RecordingTranscriptPage() {
                             })}
                         </Box>
                     ) : hasTranscript ? (
-                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.08)' }}>
+                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.08)' }}>
                             <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
                                 {recording.transcript_text}
                             </Typography>
@@ -207,7 +208,7 @@ export default function RecordingTranscriptPage() {
                         <audio
                             ref={audioRef}
                             controls
-                            src={recording.audio_url}
+                            src={resolveMediaUrl(recording.audio_url)}
                             style={{ width: '100%' }}
                             onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime || 0)}
                             onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime || 0)}

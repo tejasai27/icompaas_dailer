@@ -3,29 +3,38 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     Box, Drawer, AppBar, Toolbar, Typography, IconButton,
     List, ListItem, ListItemButton, ListItemIcon, ListItemText,
-    Avatar, Chip, Tooltip, Divider, Badge
+    Avatar, Tooltip, Divider, Badge, Button
 } from '@mui/material';
 import {
     Dashboard, Campaign, Headphones, Contacts, Phone, Dialpad,
     History, Settings, Menu, ChevronLeft, PowerSettingsNew,
-    Notifications, Circle, People, AudioFile, Hub
+    Notifications, Circle, People, AudioFile, Add
+
+
 } from '@mui/icons-material';
 import useAuth from '../context/useAuth';
 
-const DRAWER_WIDTH = 260;
+const DRAWER_WIDTH = 248;
 
 const nav = [
-    { label: 'Dashboard', icon: <Dashboard />, path: '/dashboard' },
-    { label: 'Dial', icon: <Dialpad />, path: '/dial' },
-    { label: 'Campaigns', icon: <Campaign />, path: '/campaigns' },
-    { label: 'Salesfloor', icon: <Headphones />, path: '/salesfloor' },
-    { label: 'SDRs', icon: <People />, path: '/sdrs' },
-    { label: 'Contacts', icon: <Contacts />, path: '/contacts' },
-    { label: 'Call Logs', icon: <History />, path: '/call-logs' },
-    { label: 'Call Recordings', icon: <AudioFile />, path: '/recordings' },
-    { label: 'Integrations', icon: <Hub />, path: '/integrations' },
-    { label: 'Settings', icon: <Settings />, path: '/settings' },
+    { label: 'Dashboard', icon: <Dashboard fontSize="small" />, path: '/dashboard' },
+    { label: 'Dial', icon: <Dialpad fontSize="small" />, path: '/dial' },
+    { label: 'Campaigns', icon: <Campaign fontSize="small" />, path: '/campaigns' },
+    { label: 'Salesfloor', icon: <Headphones fontSize="small" />, path: '/salesfloor' },
+    { label: 'SDRs', icon: <People fontSize="small" />, path: '/sdrs' },
+    { label: 'Contacts', icon: <Contacts fontSize="small" />, path: '/contacts' },
+    { label: 'Call Logs', icon: <History fontSize="small" />, path: '/call-logs' },
+    { label: 'Call Recordings', icon: <AudioFile fontSize="small" />, path: '/recordings' },
+    { label: 'Settings', icon: <Settings fontSize="small" />, path: '/settings' },
+
 ];
+
+// Sidebar background - very dark navy, like Image 2
+const SIDEBAR_BG = '#0d1b2e';
+const SIDEBAR_HOVER = 'rgba(255,255,255,0.07)';
+const SIDEBAR_ACTIVE = 'rgba(255,255,255,0.12)';
+const NAV_TEXT = 'rgba(255,255,255,0.75)';
+const NAV_TEXT_ACTIVE = '#ffffff';
 
 export default function Layout() {
     const [open, setOpen] = useState(true);
@@ -34,68 +43,119 @@ export default function Layout() {
     const location = useLocation();
 
     return (
-        <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+        <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#f0f4f9' }}>
             {/* Sidebar */}
             <Drawer
                 variant="permanent"
                 sx={{
-                    width: open ? DRAWER_WIDTH : 72,
-                    transition: 'width 0.3s ease',
+                    width: open ? DRAWER_WIDTH : 60,
+                    flexShrink: 0,
+                    transition: 'width 0.25s ease',
                     '& .MuiDrawer-paper': {
-                        width: open ? DRAWER_WIDTH : 72,
+                        width: open ? DRAWER_WIDTH : 60,
                         overflowX: 'hidden',
-                        transition: 'width 0.3s ease',
-                        bgcolor: '#12122a',
-                        borderRight: '1px solid rgba(99,102,241,0.15)',
+                        transition: 'width 0.25s ease',
+                        bgcolor: SIDEBAR_BG,
+                        border: 'none',
                         display: 'flex',
                         flexDirection: 'column',
                     },
                 }}
             >
-                {/* Logo */}
-                <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1.5, minHeight: 64 }}>
+                {/* Brand header */}
+                <Box sx={{
+                    px: 2,
+                    pt: 2,
+                    pb: 1.5,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1.2,
+                    minHeight: 60,
+                }}>
                     <Box sx={{
-                        width: 36, height: 36, borderRadius: 2,
-                        background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+                        width: 34, height: 34,
+                        borderRadius: 2,
+                        background: 'linear-gradient(135deg, #0142a2, #1a6ed8)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        flexShrink: 0
+                        flexShrink: 0,
+                        boxShadow: '0 2px 8px rgba(1,66,162,0.5)',
                     }}>
-                        <Phone sx={{ fontSize: 18, color: '#fff' }} />
+                        <Phone sx={{ fontSize: 17, color: '#fff' }} />
                     </Box>
                     {open && (
-                        <Typography variant="h6" fontWeight={700} sx={{
-                            background: 'linear-gradient(90deg, #6366f1, #818cf8)',
-                            WebkitBackgroundClip: 'text',
-                            WebkitTextFillColor: 'transparent',
-                        }}>
-                            PowerDialer
-                        </Typography>
+                        <Box>
+                            <Typography sx={{ fontSize: '0.95rem', fontWeight: 700, color: '#ffffff', lineHeight: 1.1, letterSpacing: '-0.01em' }}>
+                                PowerDialer
+                            </Typography>
+                            <Typography sx={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.45)', lineHeight: 1 }}>
+                                Sales Platform
+                            </Typography>
+                        </Box>
                     )}
                 </Box>
 
-                <Divider sx={{ borderColor: 'rgba(99,102,241,0.1)' }} />
+                {/* Create Campaign button */}
+                {open && (
+                    <Box sx={{ px: 1.5, pb: 1.5 }}>
+                        <Button
+                            fullWidth
+                            variant="contained"
+                            startIcon={<Add />}
+                            onClick={() => navigate('/campaigns/new')}
+                            sx={{
+                                bgcolor: '#0142a2',
+                                color: '#fff',
+                                fontWeight: 700,
+                                fontSize: '0.82rem',
+                                borderRadius: 2,
+                                py: 1,
+                                textTransform: 'none',
+                                boxShadow: 'none',
+                                '&:hover': {
+                                    bgcolor: '#1a5bc4',
+                                    boxShadow: '0 4px 12px rgba(1,66,162,0.4)',
+                                },
+                            }}
+                        >
+                            Create Campaign
+                        </Button>
+                    </Box>
+                )}
 
-                {/* Nav items */}
-                <List sx={{ flex: 1, px: 1, pt: 1 }}>
+                {/* Nav */}
+                <List sx={{ flex: 1, px: 1, pt: 0.5, pb: 1 }}>
                     {nav.map(({ label, icon, path }) => {
-                        const active = location.pathname.startsWith(path);
+                        const active = location.pathname === path || location.pathname.startsWith(path + '/');
                         return (
-                            <ListItem key={path} disablePadding sx={{ mb: 0.5 }}>
+                            <ListItem key={path} disablePadding sx={{ mb: 0.25 }}>
                                 <Tooltip title={!open ? label : ''} placement="right">
                                     <ListItemButton
                                         onClick={() => navigate(path)}
                                         sx={{
-                                            borderRadius: 2,
-                                            minHeight: 44,
-                                            px: 1.5,
-                                            bgcolor: active ? 'rgba(99,102,241,0.15)' : 'transparent',
-                                            '&:hover': { bgcolor: 'rgba(99,102,241,0.1)' },
-                                            transition: 'all 0.2s',
+                                            borderRadius: 1.5,
+                                            minHeight: 38,
+                                            px: open ? 1.5 : 1,
+                                            py: 0.75,
+                                            position: 'relative',
+                                            bgcolor: active ? SIDEBAR_ACTIVE : 'transparent',
+                                            '&:hover': { bgcolor: active ? SIDEBAR_ACTIVE : SIDEBAR_HOVER },
+                                            transition: 'background 150ms ease',
                                         }}
                                     >
+                                        {/* Active left indicator */}
+                                        {active && (
+                                            <Box sx={{
+                                                position: 'absolute',
+                                                left: 0, top: 6, bottom: 6,
+                                                width: 3,
+                                                borderRadius: '0 2px 2px 0',
+                                                bgcolor: '#4d9fff',
+                                            }} />
+                                        )}
                                         <ListItemIcon sx={{
-                                            minWidth: 36,
-                                            color: active ? '#6366f1' : '#64748b',
+                                            minWidth: open ? 32 : 'auto',
+                                            color: active ? NAV_TEXT_ACTIVE : NAV_TEXT,
+                                            justifyContent: 'center',
                                         }}>
                                             {icon}
                                         </ListItemIcon>
@@ -103,17 +163,12 @@ export default function Layout() {
                                             <ListItemText
                                                 primary={label}
                                                 primaryTypographyProps={{
-                                                    fontSize: '0.875rem',
+                                                    fontSize: '0.85rem',
                                                     fontWeight: active ? 600 : 400,
-                                                    color: active ? '#6366f1' : '#94a3b8',
+                                                    color: active ? NAV_TEXT_ACTIVE : NAV_TEXT,
+                                                    letterSpacing: '0.01em',
                                                 }}
                                             />
-                                        )}
-                                        {active && open && (
-                                            <Box sx={{
-                                                width: 3, height: 20, borderRadius: 2,
-                                                bgcolor: '#6366f1', ml: 1
-                                            }} />
                                         )}
                                     </ListItemButton>
                                 </Tooltip>
@@ -122,40 +177,62 @@ export default function Layout() {
                     })}
                 </List>
 
-                <Divider sx={{ borderColor: 'rgba(99,102,241,0.1)' }} />
+                <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)' }} />
 
                 {/* User section */}
                 <Box sx={{ p: 1.5 }}>
                     {open ? (
                         <Box sx={{
-                            display: 'flex', alignItems: 'center', gap: 1.5,
-                            p: 1.5, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.08)',
-                            cursor: 'pointer', '&:hover': { bgcolor: 'rgba(99,102,241,0.15)' }
+                            display: 'flex', alignItems: 'center', gap: 1.2,
+                            p: 1.2, borderRadius: 2,
+                            bgcolor: 'rgba(255,255,255,0.07)',
+                            cursor: 'default',
                         }}>
-                            <Avatar sx={{ width: 32, height: 32, bgcolor: '#6366f1', fontSize: '0.85rem' }}>
+                            <Avatar sx={{
+                                width: 30, height: 30,
+                                bgcolor: '#0142a2',
+                                fontSize: '0.8rem',
+                                color: '#fff',
+                                fontWeight: 700,
+                                flexShrink: 0,
+                            }}>
                                 {user?.full_name?.[0] || user?.username?.[0]}
                             </Avatar>
-                            <Box flex={1}>
-                                <Typography fontSize="0.8rem" fontWeight={600} color="text.primary">
+                            <Box flex={1} minWidth={0}>
+                                <Typography fontSize="0.78rem" fontWeight={600} sx={{ color: '#fff', lineHeight: 1.2 }} noWrap>
                                     {user?.full_name || user?.username}
                                 </Typography>
-                                <Chip
-                                    label={user?.role}
-                                    size="small"
-                                    sx={{ height: 16, fontSize: '0.65rem', bgcolor: 'rgba(99,102,241,0.2)', color: '#818cf8' }}
-                                />
+                                <Typography fontSize="0.65rem" sx={{ color: 'rgba(255,255,255,0.5)', textTransform: 'capitalize' }}>
+                                    {user?.role}
+                                </Typography>
                             </Box>
                             <Tooltip title="Logout">
-                                <IconButton size="small" onClick={logout} sx={{ color: '#64748b' }}>
-                                    <PowerSettingsNew fontSize="small" />
+                                <IconButton
+                                    size="small"
+                                    onClick={logout}
+                                    sx={{
+                                        color: 'rgba(255,255,255,0.5)',
+                                        width: 28, height: 28,
+                                        '&:hover': { color: '#fff', bgcolor: 'rgba(255,255,255,0.1)' },
+                                    }}
+                                >
+                                    <PowerSettingsNew sx={{ fontSize: 16 }} />
                                 </IconButton>
                             </Tooltip>
                         </Box>
                     ) : (
-                        <Tooltip title={user?.full_name} placement="right">
+                        <Tooltip title={user?.full_name || 'Logout'} placement="right">
                             <Avatar
                                 onClick={logout}
-                                sx={{ width: 36, height: 36, bgcolor: '#6366f1', fontSize: '0.9rem', cursor: 'pointer', mx: 'auto' }}
+                                sx={{
+                                    width: 34, height: 34,
+                                    bgcolor: '#0142a2',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    mx: 'auto',
+                                    color: '#fff',
+                                    fontWeight: 700,
+                                }}
                             >
                                 {user?.full_name?.[0] || user?.username?.[0]}
                             </Avatar>
@@ -164,27 +241,44 @@ export default function Layout() {
                 </Box>
             </Drawer>
 
-            {/* Main content */}
-            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Main content area */}
+            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
                 {/* Top bar */}
                 <AppBar position="static" elevation={0} sx={{
-                    bgcolor: '#12122a',
-                    borderBottom: '1px solid rgba(99,102,241,0.15)',
+                    bgcolor: '#ffffff',
+                    borderBottom: '1px solid #e2e8f0',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
                 }}>
-                    <Toolbar sx={{ gap: 2 }}>
-                        <IconButton onClick={() => setOpen(!open)} sx={{ color: '#64748b' }}>
-                            {open ? <ChevronLeft /> : <Menu />}
+                    <Toolbar sx={{ gap: 1, minHeight: '56px !important', px: 2 }}>
+                        <IconButton
+                            onClick={() => setOpen(!open)}
+                            size="small"
+                            sx={{
+                                color: '#64748b',
+                                '&:hover': { bgcolor: 'rgba(1,66,162,0.06)', color: '#0142a2' },
+                            }}
+                        >
+                            {open ? <ChevronLeft fontSize="small" /> : <Menu fontSize="small" />}
                         </IconButton>
                         <Box flex={1} />
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Circle sx={{ fontSize: 8, color: '#10b981' }} />
-                            <Typography variant="caption" color="success.main" fontWeight={600}>
+                        {/* System status */}
+                        <Box sx={{
+                            display: 'flex', alignItems: 'center', gap: 0.6,
+                            px: 1.5, py: 0.5, borderRadius: 2,
+                            bgcolor: 'rgba(5,150,105,0.08)',
+                            border: '1px solid rgba(5,150,105,0.18)',
+                        }}>
+                            <Circle sx={{ fontSize: 7, color: '#059669' }} />
+                            <Typography variant="caption" sx={{ color: '#059669', fontWeight: 700, fontSize: '0.72rem' }}>
                                 System Online
                             </Typography>
                         </Box>
-                        <IconButton sx={{ color: '#64748b' }}>
-                            <Badge badgeContent={2} color="error">
-                                <Notifications />
+                        <IconButton
+                            size="small"
+                            sx={{ color: '#64748b', '&:hover': { color: '#0142a2', bgcolor: 'rgba(1,66,162,0.06)' } }}
+                        >
+                            <Badge badgeContent={0} color="error">
+                                <Notifications fontSize="small" />
                             </Badge>
                         </IconButton>
                     </Toolbar>

@@ -55,7 +55,7 @@ export default function SalesfloorPage() {
                             <Box sx={{ textAlign: 'center', py: 2 }}>
                                 <Avatar sx={{
                                     width: 72, height: 72, fontSize: '1.5rem', mx: 'auto', mb: 2,
-                                    bgcolor: '#6366f1', border: `3px solid ${available ? '#10b981' : '#64748b'}`
+                                    bgcolor: '#0142a2', border: `3px solid ${available ? '#10b981' : '#64748b'}`
                                 }}>
                                     {user?.full_name?.[0] || user?.username?.[0]}
                                 </Avatar>
@@ -65,7 +65,7 @@ export default function SalesfloorPage() {
                                     sx={{ bgcolor: available ? '#10b98125' : '#ef444425', color: available ? '#10b981' : '#ef4444', mt: 1 }}
                                 />
                             </Box>
-                            <Divider sx={{ my: 2, borderColor: 'rgba(99,102,241,0.1)' }} />
+                            <Divider sx={{ my: 2, borderColor: 'rgba(1,66,162,0.1)' }} />
                             <Typography variant="caption" color="text.secondary">Role</Typography>
                             <Typography fontWeight={500} textTransform="capitalize">{user?.role}</Typography>
                         </CardContent>
@@ -95,7 +95,7 @@ export default function SalesfloorPage() {
                                     <Box sx={{ display: 'flex', gap: 3 }}>
                                         <Box>
                                             <Typography variant="caption" color="text.secondary">Dialed</Typography>
-                                            <Typography fontWeight={700} color="#6366f1">{c.dialed_contacts}/{c.total_contacts}</Typography>
+                                            <Typography fontWeight={700} color="#0142a2">{c.dialed_contacts}/{c.total_contacts}</Typography>
                                         </Box>
                                         <Box>
                                             <Typography variant="caption" color="text.secondary">Connected</Typography>
@@ -123,9 +123,9 @@ export default function SalesfloorPage() {
                             <Typography variant="subtitle1" fontWeight={600} mb={2}>📞 Live Call Feed</Typography>
                             <List disablePadding>
                                 {recentCalls.map(call => (
-                                    <ListItem key={call.id} divider sx={{ borderColor: 'rgba(99,102,241,0.08)' }}>
+                                    <ListItem key={call.id} divider sx={{ borderColor: 'rgba(1,66,162,0.08)' }}>
                                         <ListItemAvatar>
-                                            <Avatar sx={{ bgcolor: call.status === 'answered' ? '#10b98130' : '#6366f130', color: call.status === 'answered' ? '#10b981' : '#818cf8', width: 36, height: 36, fontSize: '0.8rem' }}>
+                                            <Avatar sx={{ bgcolor: call.status === 'answered' ? '#10b98130' : '#0142a230', color: call.status === 'answered' ? '#10b981' : '#1a5bc4', width: 36, height: 36, fontSize: '0.8rem' }}>
                                                 {call.contact_name?.[0] || '?'}
                                             </Avatar>
                                         </ListItemAvatar>

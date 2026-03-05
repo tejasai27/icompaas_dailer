@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Chip, Button,
     Table, TableBody, TableCell, TableContainer, TableHead,
-    TableRow, Skeleton
+    TableRow, Skeleton, Paper
 } from '@mui/material';
 import {
-    Phone, CheckCircle, TrendingUp, Contacts, History
+    Phone, CheckCircle, TrendingUp, Contacts, History, ArrowUpward
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -27,10 +27,10 @@ const StatCard = ({ title, value, icon, color, subtitle, loading }) => (
                 </Box>
                 <Box sx={{
                     width: 48, height: 48, borderRadius: 2,
-                    bgcolor: `${color || '#6366f1'}20`,
+                    bgcolor: `${color || '#0142a2'}20`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
-                    {React.cloneElement(icon, { sx: { color: color || '#6366f1', fontSize: 22 } })}
+                    {React.cloneElement(icon, { sx: { color: color || '#0142a2', fontSize: 22 } })}
                 </Box>
             </Box>
         </CardContent>
@@ -43,7 +43,7 @@ const callStatusColors = {
     no_answer: '#f59e0b',
     busy: '#f59e0b',
     failed: '#ef4444',
-    completed: '#6366f1',
+    completed: '#0142a2',
     initiated: '#3b82f6',
     cancelled: '#64748b',
 };
@@ -123,7 +123,7 @@ export default function DashboardPage() {
                     variant="contained"
                     startIcon={<Phone />}
                     onClick={() => navigate('/dial')}
-                    sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                    sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
                 >
                     Open Dialer
                 </Button>
@@ -133,7 +133,7 @@ export default function DashboardPage() {
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={12} sm={6} md={3}>
                     <StatCard title="Total Calls" value={stats.total_calls.toLocaleString()}
-                        icon={<History />} color="#6366f1" loading={loading} />
+                        icon={<History />} color="#0142a2" loading={loading} />
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
                     <StatCard title="Total Contacts" value={stats.total_contacts.toLocaleString()}
@@ -167,7 +167,7 @@ export default function DashboardPage() {
                                                 <Cell key={i} fill={entry.color} />
                                             ))}
                                         </Pie>
-                                        <Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 8 }} />
+                                        <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid rgba(1,66,162,0.3)', borderRadius: 8 }} />
                                     </PieChart>
                                 </ResponsiveContainer>
                             )}
@@ -198,7 +198,7 @@ export default function DashboardPage() {
                                         </Grid>
                                     ) : Object.entries(statusCounts).map(([status, value]) => (
                                         <Grid item xs={6} sm={4} md={3} key={status}>
-                                            <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.12)' }}>
+                                            <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.08)', border: '1px solid rgba(1,66,162,0.12)' }}>
                                                 <Typography variant="caption" color="text.secondary">{status}</Typography>
                                                 <Typography variant="h6" fontWeight={700}>{Number(value).toLocaleString()}</Typography>
                                             </Box>

@@ -18,10 +18,10 @@ import api from '../services/api';
 import toast from 'react-hot-toast';
 
 const STATUS_COLORS = {
-    active: '#10b981', paused: '#f59e0b', completed: '#6366f1', draft: '#64748b',
+    active: '#10b981', paused: '#f59e0b', completed: '#0142a2', draft: '#64748b',
 };
 const CALL_STATUS_COLORS = {
-    answered: '#10b981', 'no-answer': '#f59e0b', busy: '#ef4444', failed: '#ef4444', completed: '#6366f1', initiated: '#3b82f6',
+    answered: '#10b981', 'no-answer': '#f59e0b', busy: '#ef4444', failed: '#ef4444', completed: '#0142a2', initiated: '#3b82f6',
 };
 
 function StatBadge({ label, value, color }) {
@@ -257,7 +257,7 @@ export default function CampaignDetailPage() {
 
     if (loading) return (
         <Box sx={{ p: 4, textAlign: 'center' }}>
-            <CircularProgress sx={{ color: '#6366f1' }} />
+            <CircularProgress sx={{ color: '#0142a2' }} />
         </Box>
     );
 
@@ -286,7 +286,7 @@ export default function CampaignDetailPage() {
                             label={campaign.dialing_mode + ' dialer'}
                             size="small"
                             variant="outlined"
-                            sx={{ borderColor: 'rgba(99,102,241,0.3)', color: '#818cf8' }}
+                            sx={{ borderColor: 'rgba(1,66,162,0.3)', color: '#1a5bc4' }}
                         />
                     </Box>
                     <Typography color="text.secondary" variant="body2">
@@ -305,7 +305,7 @@ export default function CampaignDetailPage() {
                         variant="outlined"
                         startIcon={<Dialpad />}
                         onClick={() => navigate(`/dial?campaign_id=${id}`)}
-                        sx={{ borderColor: 'rgba(99,102,241,0.4)', color: '#818cf8' }}
+                        sx={{ borderColor: 'rgba(1,66,162,0.4)', color: '#1a5bc4' }}
                     >
                         Open Dialer
                     </Button>
@@ -387,7 +387,7 @@ export default function CampaignDetailPage() {
             {/* Stats row */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={6} sm={3}>
-                    <StatBadge label="Total Contacts" value={campaign.total_contacts} color="#6366f1" />
+                    <StatBadge label="Total Contacts" value={campaign.total_contacts} color="#0142a2" />
                 </Grid>
                 <Grid item xs={6} sm={3}>
                     <StatBadge label="Dialed" value={campaign.dialed_contacts} color="#3b82f6" />
@@ -406,10 +406,10 @@ export default function CampaignDetailPage() {
                     value={tab}
                     onChange={(_, v) => setTab(v)}
                     sx={{
-                        borderBottom: '1px solid rgba(99,102,241,0.1)',
+                        borderBottom: '1px solid rgba(1,66,162,0.1)',
                         '& .MuiTab-root': { textTransform: 'none', fontWeight: 500, color: '#64748b' },
-                        '& .Mui-selected': { color: '#6366f1' },
-                        '& .MuiTabs-indicator': { bgcolor: '#6366f1' },
+                        '& .Mui-selected': { color: '#0142a2' },
+                        '& .MuiTabs-indicator': { bgcolor: '#0142a2' },
                     }}
                 >
                     <Tab label={`Contacts (${contacts.length})`} />
@@ -489,7 +489,7 @@ export default function CampaignDetailPage() {
                                 startIcon={syncingLogs ? <CircularProgress size={14} color="inherit" /> : <Refresh />}
                                 onClick={handleSyncExotelLogs}
                                 disabled={syncingLogs}
-                                sx={{ borderColor: 'rgba(99,102,241,0.4)', color: '#818cf8' }}
+                                sx={{ borderColor: 'rgba(1,66,162,0.4)', color: '#1a5bc4' }}
                             >
                                 {syncingLogs ? 'Syncing...' : 'Sync Exotel'}
                             </Button>
@@ -533,7 +533,7 @@ export default function CampaignDetailPage() {
                                             <TableCell>
                                                 {log.recording_url ? (
                                                     <IconButton size="small" href={log.recording_url} target="_blank"
-                                                        sx={{ color: '#6366f1' }} onClick={e => e.stopPropagation()}>
+                                                        sx={{ color: '#0142a2' }} onClick={e => e.stopPropagation()}>
                                                         <Download fontSize="small" />
                                                     </IconButton>
                                                 ) : <Typography fontSize="0.8rem" color="text.disabled">—</Typography>}
@@ -572,7 +572,7 @@ export default function CampaignDetailPage() {
                                                     paddingAngle={3} dataKey="value">
                                                     {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                                                 </Pie>
-                                                <ReTooltip contentStyle={{ background: '#1a1a2e', border: 'none', borderRadius: 8 }} />
+                                                <ReTooltip contentStyle={{ background: '#ffffff', border: 'none', borderRadius: 8 }} />
                                             </PieChart>
                                         </ResponsiveContainer>
                                         <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -592,7 +592,7 @@ export default function CampaignDetailPage() {
                                 <Typography variant="subtitle1" fontWeight={600} mb={2}>Summary Statistics</Typography>
                                 <Grid container spacing={2}>
                                     {[
-                                        { label: 'Total Calls', value: analytics.total_calls, color: '#6366f1' },
+                                        { label: 'Total Calls', value: analytics.total_calls, color: '#0142a2' },
                                         { label: 'Answered', value: analytics.answered_calls, color: '#10b981' },
                                         { label: 'Connect Rate', value: `${analytics.connect_rate}%`, color: '#f59e0b' },
                                         { label: 'Avg Duration', value: `${analytics.avg_duration_seconds}s`, color: '#3b82f6' },
@@ -634,8 +634,8 @@ export default function CampaignDetailPage() {
                                         sx={{
                                             p: 1.5,
                                             borderRadius: 1.5,
-                                            bgcolor: 'rgba(99,102,241,0.08)',
-                                            border: '1px solid rgba(99,102,241,0.12)',
+                                            bgcolor: 'rgba(1,66,162,0.08)',
+                                            border: '1px solid rgba(1,66,162,0.12)',
                                         }}
                                     >
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
@@ -669,7 +669,7 @@ export default function CampaignDetailPage() {
             {/* Call detail dialog */}
             {selectedCall && (
                 <Dialog open={Boolean(selectedCall)} onClose={() => setSelectedCall(null)} maxWidth="md" fullWidth
-                    PaperProps={{ sx: { bgcolor: '#1a1a2e', border: '1px solid rgba(99,102,241,0.2)' } }}>
+                    PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}>
                     <DialogTitle>
                         Call with {selectedCall.contact_name}
                         <Chip label={selectedCall.status} size="small" sx={{ ml: 2 }} />
@@ -692,7 +692,7 @@ export default function CampaignDetailPage() {
                         {selectedCall.transcript && (
                             <Box sx={{ mt: 2 }}>
                                 <Typography variant="subtitle2" fontWeight={600} mb={1}>📝 Transcript</Typography>
-                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.1)' }}>
+                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.05)', border: '1px solid rgba(1,66,162,0.1)' }}>
                                     <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
                                         {selectedCall.transcript}
                                     </Typography>

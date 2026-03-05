@@ -226,8 +226,8 @@ export default function CallRecordingsPage() {
                                             size="small"
                                             label={row.source}
                                             sx={{
-                                                bgcolor: row.source === 'upload' ? 'rgba(16,185,129,0.2)' : 'rgba(99,102,241,0.2)',
-                                                color: row.source === 'upload' ? '#10b981' : '#818cf8',
+                                                bgcolor: row.source === 'upload' ? 'rgba(16,185,129,0.2)' : 'rgba(1,66,162,0.2)',
+                                                color: row.source === 'upload' ? '#10b981' : '#1a5bc4',
                                             }}
                                         />
                                     </TableCell>
