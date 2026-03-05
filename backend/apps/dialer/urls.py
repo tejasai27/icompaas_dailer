@@ -5,6 +5,7 @@ urlpatterns = [
     path("health/", views.health, name="health"),
     path("integrations/hubspot/settings/", views.hubspot_settings, name="hubspot-settings"),
     path("integrations/hubspot/test/", views.test_hubspot_settings, name="test-hubspot-settings"),
+    path("integrations/hubspot/records/", views.list_hubspot_records, name="list-hubspot-records"),
     path(
         "integrations/hubspot/sync-call/<uuid:call_public_id>/",
         views.sync_call_to_hubspot,

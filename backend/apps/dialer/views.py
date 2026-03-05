@@ -964,10 +964,28 @@ def clear_exotel_wait_audio(request: HttpRequest) -> JsonResponse:
 
 
 def _get_hubspot_settings(create: bool = False) -> HubSpotIntegrationSettings | None:
-    settings_row = HubSpotIntegrationSettings.objects.order_by("id").first()
+    def _is_missing_table_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "dialer_hubspotintegrationsettings" in message and (
+            "does not exist" in message or "undefinedtable" in message or "no such table" in message
+        )
+
+    try:
+        settings_row = HubSpotIntegrationSettings.objects.order_by("id").first()
+    except (ProgrammingError, OperationalError) as exc:
+        if _is_missing_table_error(exc):
+            return None
+        raise
+
     if settings_row or not create:
         return settings_row
-    return HubSpotIntegrationSettings.objects.create()
+
+    try:
+        return HubSpotIntegrationSettings.objects.create()
+    except (ProgrammingError, OperationalError) as exc:
+        if _is_missing_table_error(exc):
+            return None
+        raise
 
 
 def _mask_secret(value: str) -> str:
@@ -1302,6 +1320,11 @@ def _build_hubspot_call_body(
     return "\n".join(lines)
 
 
+def _build_hubspot_task_subject(call: CallSession) -> str:
+    campaign_name = call.campaign.name if call.campaign else "Direct Dial"
+    return f"Call follow-up: {call.lead.full_name} ({campaign_name})"
+
+
 def _build_hubspot_sync_signature(
     call: CallSession,
     display_status: str,
@@ -1351,6 +1374,7 @@ def _save_hubspot_sync_state(
     call: CallSession,
     *,
     call_object_id: str = "",
+    task_object_id: str = "",
     deal_id: str = "",
     deal_name: str = "",
     sync_signature: str = "",
@@ -1363,6 +1387,8 @@ def _save_hubspot_sync_state(
 
     if call_object_id:
         state["call_object_id"] = call_object_id
+    if task_object_id:
+        state["task_object_id"] = task_object_id
     if deal_id:
         state["deal_id"] = deal_id
     if deal_name:
@@ -1485,6 +1511,7 @@ def _sync_call_to_hubspot(
     raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
     hubspot_state = raw_payload.get("hubspot_sync") if isinstance(raw_payload.get("hubspot_sync"), dict) else {}
     existing_hubspot_call_id = str(hubspot_state.get("call_object_id") or "").strip()
+    existing_hubspot_task_id = str(hubspot_state.get("task_object_id") or "").strip()
 
     sync_signature = _build_hubspot_sync_signature(
         call,
@@ -1500,6 +1527,7 @@ def _sync_call_to_hubspot(
             "ok": True,
             "skipped": "unchanged",
             "hubspot_call_id": existing_hubspot_call_id,
+            "hubspot_task_id": existing_hubspot_task_id,
             "deal_id": deal_id,
             "deal_name": deal_name,
         }
@@ -1563,6 +1591,7 @@ def _sync_call_to_hubspot(
         _save_hubspot_sync_state(
             call,
             call_object_id=existing_hubspot_call_id,
+            task_object_id=existing_hubspot_task_id,
             deal_id=deal_id,
             deal_name=deal_name,
             sync_reason=reason,
@@ -1595,6 +1624,8 @@ def _sync_call_to_hubspot(
         )
         _save_hubspot_sync_state(
             call,
+            call_object_id=existing_hubspot_call_id,
+            task_object_id=existing_hubspot_task_id,
             deal_id=deal_id,
             deal_name=deal_name,
             sync_reason=reason,
@@ -1603,25 +1634,83 @@ def _sync_call_to_hubspot(
         )
         return {"ok": False, "error": error_text}
 
-    association_result = {"ok": True, "skipped": "no_deal_association"}
-    if deal_id:
-        association_path = f"/crm/v4/objects/calls/{hubspot_call_id}/associations/default/deals/{deal_id}"
-        association_result = _hubspot_api_request(access_token, "PUT", association_path, payload=None)
-        if not association_result.get("ok"):
+    has_deal_context = bool(_first_non_empty_text(deal_id, deal_name))
+    task_action = "skip_task_no_deal"
+    task_properties: dict[str, object] = {}
+    task_result: dict[str, object] = {"ok": True, "skipped": "task_not_created_without_deal_context"}
+    hubspot_task_id = existing_hubspot_task_id
+    if has_deal_context:
+        task_status = "COMPLETED" if (call.ended_at or reason in {"terminal", "disposition", "manual"}) else "NOT_STARTED"
+        task_properties = {
+            "hs_timestamp": timestamp_ms,
+            "hs_task_subject": _build_hubspot_task_subject(call),
+            "hs_task_body": _build_hubspot_call_body(
+                call,
+                display_status=display_status,
+                outcome=outcome,
+                notes=notes,
+                deal_id=deal_id,
+                deal_name=deal_name,
+            ),
+            "hs_task_status": task_status,
+            "hs_task_type": "CALL",
+        }
+        task_action = "update_task" if existing_hubspot_task_id else "create_task"
+        task_payload = {"properties": task_properties}
+        task_path = (
+            f"/crm/v3/objects/tasks/{existing_hubspot_task_id}"
+            if existing_hubspot_task_id
+            else "/crm/v3/objects/tasks"
+        )
+        task_method = "PATCH" if existing_hubspot_task_id else "POST"
+        task_result = _hubspot_api_request(access_token, task_method, task_path, payload=task_payload)
+        if not task_result.get("ok"):
             request_payload = {
-                "action": action,
+                "action": task_action,
                 "reason": reason,
                 "call_public_id": str(call.public_id),
                 "hubspot_call_id": hubspot_call_id,
-                "properties": properties,
+                "hubspot_task_id": existing_hubspot_task_id,
+                "properties": task_properties,
                 "deal_id": deal_id,
                 "deal_name": deal_name,
             }
-            response_payload = {
-                "call_result": call_result,
-                "association_result": association_result,
+            response_payload = {"call_result": call_result, "task_result": task_result}
+            error_text = str(task_result.get("error") or "hubspot_task_sync_failed")
+            _record_hubspot_sync_log(
+                call,
+                CRMSyncLog.STATUS_FAILED,
+                request_payload=request_payload,
+                response_payload=response_payload,
+                error_message=error_text,
+            )
+            _save_hubspot_sync_state(
+                call,
+                call_object_id=hubspot_call_id,
+                task_object_id=existing_hubspot_task_id,
+                deal_id=deal_id,
+                deal_name=deal_name,
+                sync_reason=reason,
+                status=CRMSyncLog.STATUS_FAILED,
+                error=error_text,
+            )
+            return {"ok": False, "error": "hubspot_task_sync_failed", "details": task_result}
+
+        task_result_raw = task_result.get("raw")
+        if not hubspot_task_id and isinstance(task_result_raw, dict):
+            hubspot_task_id = str(task_result_raw.get("id") or "").strip()
+        if not hubspot_task_id:
+            request_payload = {
+                "action": task_action,
+                "reason": reason,
+                "call_public_id": str(call.public_id),
+                "hubspot_call_id": hubspot_call_id,
+                "properties": task_properties,
+                "deal_id": deal_id,
+                "deal_name": deal_name,
             }
-            error_text = str(association_result.get("error") or "hubspot_deal_association_failed")
+            response_payload = {"call_result": call_result, "task_result": task_result}
+            error_text = "hubspot_task_id_missing"
             _record_hubspot_sync_log(
                 call,
                 CRMSyncLog.STATUS_FAILED,
@@ -1638,20 +1727,110 @@ def _sync_call_to_hubspot(
                 status=CRMSyncLog.STATUS_FAILED,
                 error=error_text,
             )
-            return {"ok": False, "error": "hubspot_deal_association_failed", "details": association_result}
+            return {"ok": False, "error": error_text}
+
+    call_association_result = {"ok": True, "skipped": "no_deal_association"}
+    task_association_result = (
+        {"ok": True, "skipped": "no_deal_association"}
+        if has_deal_context
+        else {"ok": True, "skipped": "task_not_created_without_deal_context"}
+    )
+    if deal_id:
+        call_association_path = f"/crm/v4/objects/calls/{hubspot_call_id}/associations/default/deals/{deal_id}"
+        call_association_result = _hubspot_api_request(access_token, "PUT", call_association_path, payload=None)
+        if not call_association_result.get("ok"):
+            request_payload = {
+                "action": action,
+                "reason": reason,
+                "call_public_id": str(call.public_id),
+                "hubspot_call_id": hubspot_call_id,
+                "hubspot_task_id": hubspot_task_id,
+                "properties": properties,
+                "deal_id": deal_id,
+                "deal_name": deal_name,
+            }
+            response_payload = {
+                "call_result": call_result,
+                "task_result": task_result,
+                "call_association_result": call_association_result,
+            }
+            error_text = str(call_association_result.get("error") or "hubspot_call_deal_association_failed")
+            _record_hubspot_sync_log(
+                call,
+                CRMSyncLog.STATUS_FAILED,
+                request_payload=request_payload,
+                response_payload=response_payload,
+                error_message=error_text,
+            )
+            _save_hubspot_sync_state(
+                call,
+                call_object_id=hubspot_call_id,
+                task_object_id=hubspot_task_id,
+                deal_id=deal_id,
+                deal_name=deal_name,
+                sync_reason=reason,
+                status=CRMSyncLog.STATUS_FAILED,
+                error=error_text,
+            )
+            return {"ok": False, "error": "hubspot_call_deal_association_failed", "details": call_association_result}
+
+        if has_deal_context and hubspot_task_id:
+            task_association_path = f"/crm/v4/objects/tasks/{hubspot_task_id}/associations/default/deals/{deal_id}"
+            task_association_result = _hubspot_api_request(access_token, "PUT", task_association_path, payload=None)
+            if not task_association_result.get("ok"):
+                request_payload = {
+                    "action": task_action,
+                    "reason": reason,
+                    "call_public_id": str(call.public_id),
+                    "hubspot_call_id": hubspot_call_id,
+                    "hubspot_task_id": hubspot_task_id,
+                    "properties": task_properties,
+                    "deal_id": deal_id,
+                    "deal_name": deal_name,
+                }
+                response_payload = {
+                    "call_result": call_result,
+                    "task_result": task_result,
+                    "call_association_result": call_association_result,
+                    "task_association_result": task_association_result,
+                }
+                error_text = str(task_association_result.get("error") or "hubspot_task_deal_association_failed")
+                _record_hubspot_sync_log(
+                    call,
+                    CRMSyncLog.STATUS_FAILED,
+                    request_payload=request_payload,
+                    response_payload=response_payload,
+                    error_message=error_text,
+                )
+                _save_hubspot_sync_state(
+                    call,
+                    call_object_id=hubspot_call_id,
+                    task_object_id=hubspot_task_id,
+                    deal_id=deal_id,
+                    deal_name=deal_name,
+                    sync_reason=reason,
+                    status=CRMSyncLog.STATUS_FAILED,
+                    error=error_text,
+                )
+                return {"ok": False, "error": "hubspot_task_deal_association_failed", "details": task_association_result}
 
     request_payload = {
         "action": action,
+        "task_action": task_action,
         "reason": reason,
         "call_public_id": str(call.public_id),
         "hubspot_call_id": hubspot_call_id,
-        "properties": properties,
+        "hubspot_task_id": hubspot_task_id,
+        "call_properties": properties,
+        "task_properties": task_properties,
         "deal_id": deal_id,
         "deal_name": deal_name,
     }
     response_payload = {
         "call_result": call_result,
-        "association_result": association_result,
+        "task_result": task_result,
+        "call_association_result": call_association_result,
+        "task_association_result": task_association_result,
         "deal_lookup": deal_lookup_result,
     }
     _record_hubspot_sync_log(
@@ -1664,6 +1843,7 @@ def _sync_call_to_hubspot(
     _save_hubspot_sync_state(
         call,
         call_object_id=hubspot_call_id,
+        task_object_id=hubspot_task_id,
         deal_id=deal_id,
         deal_name=deal_name,
         sync_signature=sync_signature,
@@ -1674,10 +1854,13 @@ def _sync_call_to_hubspot(
     return {
         "ok": True,
         "action": action,
+        "task_action": task_action,
         "hubspot_call_id": hubspot_call_id,
+        "hubspot_task_id": hubspot_task_id,
         "deal_id": deal_id,
         "deal_name": deal_name,
-        "association": association_result,
+        "call_association": call_association_result,
+        "task_association": task_association_result,
     }
 
 
@@ -1685,6 +1868,14 @@ def _sync_call_to_hubspot(
 def hubspot_settings(request: HttpRequest) -> JsonResponse:
     if request.method == "GET":
         settings_row = _get_hubspot_settings(create=True)
+        if not settings_row:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "warning": "hubspot settings schema is out of date. run: python manage.py migrate",
+                    "settings": _serialize_hubspot_settings(None),
+                }
+            )
         return JsonResponse({"ok": True, "settings": _serialize_hubspot_settings(settings_row)})
 
     if request.method != "POST":
@@ -1693,7 +1884,10 @@ def hubspot_settings(request: HttpRequest) -> JsonResponse:
     payload = _load_json_body(request)
     settings_row = _get_hubspot_settings(create=True)
     if not settings_row:
-        return JsonResponse({"error": "hubspot_settings_unavailable"}, status=500)
+        return JsonResponse(
+            {"error": "hubspot settings schema is out of date. run: python manage.py migrate"},
+            status=500,
+        )
 
     update_fields: list[str] = []
 
@@ -1809,6 +2003,84 @@ def sync_call_to_hubspot(request: HttpRequest, call_public_id: UUID) -> JsonResp
     if result.get("ok") or result.get("skipped"):
         return JsonResponse({"ok": True, "result": result, "call": _serialize_call_log(call, include_raw=False)})
     return JsonResponse({"ok": False, "result": result, "call": _serialize_call_log(call, include_raw=False)}, status=502)
+
+
+def _serialize_hubspot_record(log: CRMSyncLog, include_payload: bool = False) -> dict:
+    request_payload = log.request_payload if isinstance(log.request_payload, dict) else {}
+    response_payload = log.response_payload if isinstance(log.response_payload, dict) else {}
+
+    call_result = response_payload.get("call_result") if isinstance(response_payload.get("call_result"), dict) else {}
+    task_result = response_payload.get("task_result") if isinstance(response_payload.get("task_result"), dict) else {}
+    call_result_raw = call_result.get("raw") if isinstance(call_result.get("raw"), dict) else {}
+    task_result_raw = task_result.get("raw") if isinstance(task_result.get("raw"), dict) else {}
+
+    call = log.call
+    row = {
+        "id": log.id,
+        "target": log.target,
+        "status": log.status,
+        "retry_count": int(log.retry_count or 0),
+        "error_message": str(log.error_message or ""),
+        "action": str(request_payload.get("action") or ""),
+        "task_action": str(request_payload.get("task_action") or ""),
+        "reason": str(request_payload.get("reason") or ""),
+        "deal_id": str(request_payload.get("deal_id") or ""),
+        "deal_name": str(request_payload.get("deal_name") or ""),
+        "hubspot_call_id": _first_non_empty_text(request_payload.get("hubspot_call_id"), call_result_raw.get("id")),
+        "hubspot_task_id": _first_non_empty_text(request_payload.get("hubspot_task_id"), task_result_raw.get("id")),
+        "call_id": call.id if call else None,
+        "call_public_id": str(call.public_id) if call else "",
+        "provider_call_uuid": str(call.provider_call_uuid or "") if call else "",
+        "contact_name": call.lead.full_name if call and call.lead else "",
+        "contact_phone": call.lead.phone_e164 if call and call.lead else "",
+        "campaign_name": call.campaign.name if call and call.campaign else "Direct Dial",
+        "agent_name": call.agent.display_name if call and call.agent else "Unassigned",
+        "call_status": _derive_display_status(call) if call else "",
+        "last_attempt_at": log.last_attempt_at.isoformat() if log.last_attempt_at else None,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+    if include_payload:
+        row["request_payload"] = request_payload
+        row["response_payload"] = response_payload
+    return row
+
+
+@require_GET
+def list_hubspot_records(request: HttpRequest) -> JsonResponse:
+    page = _parse_positive_int(request.GET.get("page"), 1)
+    page_size = min(_parse_positive_int(request.GET.get("page_size"), 20), 100)
+    search = str(request.GET.get("search") or "").strip()
+    status_filter = str(request.GET.get("status") or "").strip().lower()
+    include_payload = _parse_bool(request.GET.get("include_payload"), False)
+
+    valid_statuses = {CRMSyncLog.STATUS_PENDING, CRMSyncLog.STATUS_SUCCESS, CRMSyncLog.STATUS_FAILED}
+    try:
+        queryset = (
+            CRMSyncLog.objects.select_related("call__lead", "call__agent", "call__campaign")
+            .filter(target="hubspot")
+            .order_by("-created_at", "-id")
+        )
+        if status_filter in valid_statuses:
+            queryset = queryset.filter(status=status_filter)
+        if search:
+            queryset = queryset.filter(
+                Q(call__lead__full_name__icontains=search)
+                | Q(call__lead__phone_e164__icontains=search)
+                | Q(call__campaign__name__icontains=search)
+                | Q(call__provider_call_uuid__icontains=search)
+                | Q(error_message__icontains=search)
+            )
+
+        count = queryset.count()
+        offset = (page - 1) * page_size
+        rows = list(queryset[offset : offset + page_size])
+        results = [_serialize_hubspot_record(row, include_payload=include_payload) for row in rows]
+        return JsonResponse({"count": count, "page": page, "page_size": page_size, "results": results})
+    except (ProgrammingError, OperationalError) as exc:
+        message = str(exc).lower()
+        if "dialer_crmsynclog" in message or "dialer_hubspotintegrationsettings" in message:
+            return JsonResponse({"error": "hubspot sync schema is out of date. run: python manage.py migrate"}, status=500)
+        raise
 
 
 @require_GET
@@ -3456,6 +3728,15 @@ def start_exotel_call(request: HttpRequest) -> JsonResponse:
 
     lead = get_object_or_404(Lead, id=lead_id)
     agent = get_object_or_404(AgentProfile, id=agent_id)
+    lead_metadata = lead.metadata if isinstance(lead.metadata, dict) else {}
+    deal_id = _first_non_empty_text(
+        _normalize_hubspot_deal_id(payload.get("deal_id")),
+        _lookup_value(lead_metadata, ("deal_id", "dealId", "hubspot_deal_id", "hubspotDealId")),
+    )
+    deal_name = _first_non_empty_text(
+        str(payload.get("deal_name") or "").strip()[:255],
+        _lookup_value(lead_metadata, ("deal_name", "dealName", "hubspot_deal_name", "hubspotDealName")),
+    )
 
     provider = get_provider()
     if not isinstance(provider, ExotelProvider):
@@ -3494,6 +3775,12 @@ def start_exotel_call(request: HttpRequest) -> JsonResponse:
                 "dial_sequence": "lead_first",
                 "max_duration_seconds": max_call_duration_seconds,
                 "wait_audio_url": effective_wait_url,
+                "deal_id": deal_id,
+                "deal_name": deal_name,
+                "metadata": {
+                    "deal_id": deal_id,
+                    "deal_name": deal_name,
+                },
             }
         },
     )
@@ -4521,7 +4808,16 @@ def _dispatch_campaign_next_call(campaign: Campaign) -> dict:
             campaign_lead.next_attempt_at = None
             campaign_lead.save(update_fields=["status", "attempt_count", "last_attempt_at", "next_attempt_at", "updated_at"])
 
-        dispatch_result = _initiate_campaign_call(campaign, campaign_lead)
+        try:
+            dispatch_result = _initiate_campaign_call(campaign, campaign_lead)
+        except Exception as exc:
+            logger.exception(
+                "campaign_dispatch_exception campaign_id=%s campaign_lead_id=%s",
+                campaign.id,
+                campaign_lead.id,
+            )
+            dispatch_result = {"accepted": False, "error": str(exc) or "dispatch_exception"}
+
         if dispatch_result.get("accepted"):
             result = {
                 "dispatched": True,
@@ -4539,7 +4835,21 @@ def _dispatch_campaign_next_call(campaign: Campaign) -> dict:
             )
             return result
 
-        result = {"dispatched": False, "reason": "unable_to_dispatch"}
+        campaign_lead.refresh_from_db(fields=["status", "next_attempt_at", "completed_at"])
+        if campaign_lead.status == CampaignLeadStatus.IN_PROGRESS:
+            retry_delay = max(15, int(campaign.delay_between_calls or 15))
+            campaign_lead.status = CampaignLeadStatus.PENDING
+            campaign_lead.next_attempt_at = timezone.now() + timedelta(seconds=retry_delay)
+            campaign_lead.completed_at = None
+            campaign_lead.save(update_fields=["status", "next_attempt_at", "completed_at", "updated_at"])
+
+        result = {
+            "dispatched": False,
+            "reason": str(dispatch_result.get("error") or "unable_to_dispatch"),
+            "details": dispatch_result,
+            "campaign_lead_id": campaign_lead.id,
+            "lead_id": campaign_lead.lead_id,
+        }
         _log_campaign_event(campaign, "dispatch_failed", "Unable to dispatch contact", details=result)
         return result
     finally:
@@ -4570,6 +4880,11 @@ def _initiate_campaign_call(campaign: Campaign, campaign_lead: CampaignLead) -> 
     callback_url = f"{callback_url}/api/v1/dialer/webhooks/exotel/" if callback_url else ""
 
     effective_wait_url = _assign_runtime_exotel_wait_url(provider)
+    lead_metadata = lead.metadata if isinstance(lead.metadata, dict) else {}
+    deal_id = _normalize_hubspot_deal_id(
+        _lookup_value(lead_metadata, ("deal_id", "dealId", "hubspot_deal_id", "hubspotDealId"))
+    )
+    deal_name = _lookup_value(lead_metadata, ("deal_name", "dealName", "hubspot_deal_name", "hubspotDealName"))
 
     max_call_duration_seconds = _resolve_max_call_duration_seconds()
     call = CallSession.objects.create(
@@ -4590,6 +4905,12 @@ def _initiate_campaign_call(campaign: Campaign, campaign_lead: CampaignLead) -> 
                 "dial_sequence": "lead_first",
                 "max_duration_seconds": max_call_duration_seconds,
                 "wait_audio_url": effective_wait_url,
+                "deal_id": deal_id,
+                "deal_name": deal_name,
+                "metadata": {
+                    "deal_id": deal_id,
+                    "deal_name": deal_name,
+                },
             }
         },
     )
@@ -5522,6 +5843,7 @@ def _serialize_call_log(call: CallSession, include_raw: bool = False) -> dict:
         "hubspot_sync_status": str(hubspot_sync.get("last_status") or ""),
         "hubspot_synced_at": str(hubspot_sync.get("last_synced_at") or ""),
         "hubspot_call_object_id": str(hubspot_sync.get("call_object_id") or ""),
+        "hubspot_task_object_id": str(hubspot_sync.get("task_object_id") or ""),
         "hubspot_sync_error": str(hubspot_sync.get("last_error") or ""),
     }
     if include_raw:

@@ -6,15 +6,10 @@ import {
     Card,
     CardContent,
     Chip,
-    FormControl,
     FormControlLabel,
     Grid,
-    InputLabel,
-    MenuItem,
-    Select,
     Stack,
     Switch,
-    TextField,
     Typography,
 } from '@mui/material';
 import { Hub, Refresh } from '@mui/icons-material';
@@ -23,9 +18,6 @@ import api from '../services/api';
 
 const DEFAULT_FORM = {
     enabled: false,
-    deal_association_mode: 'deal_id',
-    default_deal_id: '',
-    default_deal_name: '',
     auto_sync_terminal_calls: true,
     auto_sync_on_disposition: true,
 };
@@ -36,24 +28,78 @@ export default function IntegrationsPage() {
     const [testing, setTesting] = useState(false);
     const [clearingToken, setClearingToken] = useState(false);
     const [form, setForm] = useState(DEFAULT_FORM);
-    const [tokenInput, setTokenInput] = useState('');
     const [settingsMeta, setSettingsMeta] = useState({
         access_token_configured: false,
         access_token_masked: '',
         access_token_source: 'none',
         updated_at: '',
     });
+    const [connectionStatus, setConnectionStatus] = useState({
+        state: 'unknown',
+        message: 'Not checked yet',
+        checked_at: '',
+    });
+    const [settingsWarning, setSettingsWarning] = useState('');
+
+    const runConnectionCheck = async ({ silent = false } = {}) => {
+        const hasToken = Boolean(settingsMeta.access_token_configured);
+
+        if (!hasToken) {
+            setConnectionStatus({
+                state: 'disconnected',
+                message: 'No HubSpot token configured',
+                checked_at: '',
+            });
+            if (!silent) {
+                toast.error('HubSpot token missing');
+            }
+            return false;
+        }
+
+        setConnectionStatus({
+            state: 'checking',
+            message: 'Checking HubSpot connectivity...',
+            checked_at: '',
+        });
+        setTesting(true);
+        try {
+            const { data } = await api.post('/integrations/hubspot/test/', {});
+            const sampleName = data?.sample_deal?.name ? ` Sample deal: ${data.sample_deal.name}` : '';
+            setConnectionStatus({
+                state: 'connected',
+                message: `Connected to HubSpot.${sampleName}`.trim(),
+                checked_at: new Date().toISOString(),
+            });
+            if (!silent) {
+                toast.success(`HubSpot connection successful.${sampleName}`);
+            }
+            return true;
+        } catch (error) {
+            const detailsError = error?.response?.data?.details?.error;
+            const statusError = error?.response?.data?.error;
+            const errorText = detailsError || statusError || 'HubSpot connection failed';
+            setConnectionStatus({
+                state: 'disconnected',
+                message: errorText,
+                checked_at: new Date().toISOString(),
+            });
+            if (!silent) {
+                toast.error(errorText);
+            }
+            return false;
+        } finally {
+            setTesting(false);
+        }
+    };
 
     const loadSettings = async ({ silent = false } = {}) => {
         if (!silent) setLoading(true);
         try {
             const { data } = await api.get('/integrations/hubspot/settings/');
             const settings = data?.settings || {};
+            setSettingsWarning(String(data?.warning || '').trim());
             setForm({
                 enabled: Boolean(settings.enabled),
-                deal_association_mode: settings.deal_association_mode || 'deal_id',
-                default_deal_id: settings.default_deal_id || '',
-                default_deal_name: settings.default_deal_name || '',
                 auto_sync_terminal_calls: settings.auto_sync_terminal_calls !== false,
                 auto_sync_on_disposition: settings.auto_sync_on_disposition !== false,
             });
@@ -63,11 +109,25 @@ export default function IntegrationsPage() {
                 access_token_source: settings.access_token_source || 'none',
                 updated_at: settings.updated_at || '',
             });
-            setTokenInput('');
+            if (settings.access_token_configured) {
+                void runConnectionCheck({ silent: true });
+            } else {
+                setConnectionStatus({
+                    state: 'disconnected',
+                    message: 'No HubSpot token configured',
+                    checked_at: '',
+                });
+            }
         } catch (error) {
             if (!silent) {
                 toast.error(error?.response?.data?.error || 'Failed to load HubSpot settings');
             }
+            setSettingsWarning('');
+            setConnectionStatus({
+                state: 'unknown',
+                message: 'Unable to read HubSpot settings',
+                checked_at: '',
+            });
         } finally {
             if (!silent) setLoading(false);
         }
@@ -82,15 +142,9 @@ export default function IntegrationsPage() {
         try {
             const payload = {
                 enabled: form.enabled,
-                deal_association_mode: form.deal_association_mode,
-                default_deal_id: form.default_deal_id,
-                default_deal_name: form.default_deal_name,
                 auto_sync_terminal_calls: form.auto_sync_terminal_calls,
                 auto_sync_on_disposition: form.auto_sync_on_disposition,
             };
-            if (tokenInput.trim()) {
-                payload.access_token = tokenInput.trim();
-            }
             const { data } = await api.post('/integrations/hubspot/settings/', payload);
             const settings = data?.settings || {};
             setSettingsMeta({
@@ -99,8 +153,16 @@ export default function IntegrationsPage() {
                 access_token_source: settings.access_token_source || 'none',
                 updated_at: settings.updated_at || '',
             });
-            setTokenInput('');
             toast.success('HubSpot settings saved');
+            if (settings.access_token_configured) {
+                await runConnectionCheck({ silent: true });
+            } else {
+                setConnectionStatus({
+                    state: 'disconnected',
+                    message: 'No HubSpot token configured',
+                    checked_at: '',
+                });
+            }
         } catch (error) {
             toast.error(error?.response?.data?.error || 'Failed to save HubSpot settings');
         } finally {
@@ -109,20 +171,7 @@ export default function IntegrationsPage() {
     };
 
     const handleTest = async () => {
-        setTesting(true);
-        try {
-            const payload = {};
-            if (tokenInput.trim()) {
-                payload.access_token = tokenInput.trim();
-            }
-            const { data } = await api.post('/integrations/hubspot/test/', payload);
-            const sampleName = data?.sample_deal?.name ? ` Sample deal: ${data.sample_deal.name}` : '';
-            toast.success(`HubSpot connection successful.${sampleName}`);
-        } catch (error) {
-            toast.error(error?.response?.data?.error || 'HubSpot connection failed');
-        } finally {
-            setTesting(false);
-        }
+        await runConnectionCheck({ silent: false });
     };
 
     const handleClearToken = async () => {
@@ -136,14 +185,43 @@ export default function IntegrationsPage() {
                 access_token_source: settings.access_token_source || 'none',
                 updated_at: settings.updated_at || '',
             });
-            setTokenInput('');
             toast.success('HubSpot token cleared from DB settings');
+            setConnectionStatus({
+                state: 'disconnected',
+                message: 'No HubSpot token configured',
+                checked_at: '',
+            });
         } catch (error) {
             toast.error(error?.response?.data?.error || 'Failed to clear token');
         } finally {
             setClearingToken(false);
         }
     };
+
+    const connectionChipConfig = (() => {
+        if (connectionStatus.state === 'connected') {
+            return {
+                label: 'Connected',
+                sx: { bgcolor: 'rgba(16,185,129,0.15)', color: '#10b981' },
+            };
+        }
+        if (connectionStatus.state === 'checking') {
+            return {
+                label: 'Checking...',
+                sx: { bgcolor: 'rgba(59,130,246,0.15)', color: '#3b82f6' },
+            };
+        }
+        if (connectionStatus.state === 'unknown') {
+            return {
+                label: 'Unknown',
+                sx: { bgcolor: 'rgba(245,158,11,0.15)', color: '#f59e0b' },
+            };
+        }
+        return {
+            label: 'Disconnected',
+            sx: { bgcolor: 'rgba(239,68,68,0.15)', color: '#ef4444' },
+        };
+    })();
 
     return (
         <Box>
@@ -171,6 +249,19 @@ export default function IntegrationsPage() {
                         <Typography variant="h6" fontWeight={700}>HubSpot</Typography>
                         <Chip
                             size="small"
+                            label={connectionChipConfig.label}
+                            sx={connectionChipConfig.sx}
+                        />
+                        <Chip
+                            size="small"
+                            label={form.enabled ? 'Integration Enabled' : 'Integration Disabled'}
+                            sx={{
+                                bgcolor: form.enabled ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.2)',
+                                color: form.enabled ? '#10b981' : '#94a3b8',
+                            }}
+                        />
+                        <Chip
+                            size="small"
                             label={settingsMeta.access_token_configured ? 'Token Configured' : 'Token Missing'}
                             sx={{
                                 bgcolor: settingsMeta.access_token_configured ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
@@ -180,8 +271,17 @@ export default function IntegrationsPage() {
                     </Stack>
 
                     <Alert severity="info" sx={{ mb: 2 }}>
-                        Calls are synced to HubSpot as Call activities. Association can use Deal ID or Deal Name.
+                        Calls are synced to HubSpot as Call activities.
                     </Alert>
+                    {settingsWarning ? (
+                        <Alert severity="warning" sx={{ mb: 2 }}>
+                            {settingsWarning}
+                        </Alert>
+                    ) : null}
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Connection status: {connectionStatus.message}
+                        {connectionStatus.checked_at ? ` (checked at ${new Date(connectionStatus.checked_at).toLocaleString()})` : ''}
+                    </Typography>
 
                     <Grid container spacing={2}>
                         <Grid item xs={12} md={6}>
@@ -219,55 +319,6 @@ export default function IntegrationsPage() {
                                     />
                                 }
                                 label="Auto sync when notes/outcome saved"
-                            />
-                        </Grid>
-                        <Grid item xs={12} md={6}>
-                            <FormControl fullWidth size="small">
-                                <InputLabel>Deal Association Mode</InputLabel>
-                                <Select
-                                    label="Deal Association Mode"
-                                    value={form.deal_association_mode}
-                                    onChange={(event) =>
-                                        setForm((prev) => ({ ...prev, deal_association_mode: event.target.value }))
-                                    }
-                                >
-                                    <MenuItem value="deal_id">Deal ID</MenuItem>
-                                    <MenuItem value="deal_name">Deal Name</MenuItem>
-                                </Select>
-                            </FormControl>
-                        </Grid>
-                        <Grid item xs={12} md={6}>
-                            <TextField
-                                fullWidth
-                                size="small"
-                                label="Default Deal ID (Optional)"
-                                value={form.default_deal_id}
-                                onChange={(event) => setForm((prev) => ({ ...prev, default_deal_id: event.target.value }))}
-                            />
-                        </Grid>
-                        <Grid item xs={12} md={6}>
-                            <TextField
-                                fullWidth
-                                size="small"
-                                label="Default Deal Name (Optional)"
-                                value={form.default_deal_name}
-                                onChange={(event) => setForm((prev) => ({ ...prev, default_deal_name: event.target.value }))}
-                            />
-                        </Grid>
-                        <Grid item xs={12}>
-                            <TextField
-                                fullWidth
-                                size="small"
-                                type="password"
-                                label="HubSpot Private App Access Token"
-                                value={tokenInput}
-                                onChange={(event) => setTokenInput(event.target.value)}
-                                helperText={
-                                    settingsMeta.access_token_configured
-                                        ? `Configured (${settingsMeta.access_token_source}): ${settingsMeta.access_token_masked}`
-                                        : 'No token configured yet'
-                                }
-                                placeholder="Paste token only when updating"
                             />
                         </Grid>
                     </Grid>

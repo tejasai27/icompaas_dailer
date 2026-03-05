@@ -211,6 +211,7 @@ export default function CallLogsPage() {
                                 { label: 'Deal ID', value: selected.deal_id || '-' },
                                 { label: 'Deal Name', value: selected.deal_name || '-' },
                                 { label: 'HubSpot Sync', value: selected.hubspot_sync_status || '-' },
+                                { label: 'HubSpot Task ID', value: selected.hubspot_task_object_id || '-' },
                             ].map(({ label, value }) => (
                                 <Grid item xs={6} key={label}>
                                     <Typography variant="caption" color="text.secondary">{label}</Typography>

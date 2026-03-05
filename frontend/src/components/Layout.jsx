@@ -8,7 +8,7 @@ import {
 import {
     Dashboard, Campaign, Headphones, Contacts, Phone, Dialpad,
     History, Settings, Menu, ChevronLeft, PowerSettingsNew,
-    Notifications, Circle, People, AudioFile, Add
+    Notifications, Circle, People, AudioFile, Add, Hub, ReceiptLong
 
 
 } from '@mui/icons-material';
@@ -25,6 +25,8 @@ const nav = [
     { label: 'Contacts', icon: <Contacts fontSize="small" />, path: '/contacts' },
     { label: 'Call Logs', icon: <History fontSize="small" />, path: '/call-logs' },
     { label: 'Call Recordings', icon: <AudioFile fontSize="small" />, path: '/recordings' },
+    { label: 'Integrations', icon: <Hub fontSize="small" />, path: '/integrations' },
+    { label: 'HubSpot Records', icon: <ReceiptLong fontSize="small" />, path: '/hubspot-records' },
     { label: 'Settings', icon: <Settings fontSize="small" />, path: '/settings' },
 
 ];
