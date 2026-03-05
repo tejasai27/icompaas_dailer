@@ -235,7 +235,12 @@ export default function CampaignDetailPage() {
     };
 
     const activeCall = campaign?.active_call || null;
-    const waitingForPickup = activeCall?.stage === 'waiting_for_pickup';
+    const activeCallDisplayStatus = normalizeCallStatus(activeCall?.display_status || activeCall?.status);
+    const waitingForPickup = (
+        activeCall?.stage === 'waiting_for_pickup'
+        && !activeCall?.answered_at
+        && !['answered', 'completed', 'sdr-cut', 'bridged', 'human-detected'].includes(activeCallDisplayStatus)
+    );
     const pickupLeftSeconds = Number(activeCall?.pickup_seconds_left || 0);
     const lastCallStatus = normalizeCallStatus(campaign?.last_call_result?.display_status);
 

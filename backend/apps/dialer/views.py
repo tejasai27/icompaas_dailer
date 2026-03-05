@@ -5746,7 +5746,13 @@ def _has_provider_answer_confirmation(call: CallSession, raw_payload: dict) -> b
     if not isinstance(raw_payload, dict):
         raw_payload = {}
 
-    if call.status == CallStatus.HUMAN_DETECTED:
+    # Internal answer markers are the strongest signal.
+    if call.answered_at:
+        return True
+
+    # Once we move into bridged/human states, treat the call as answered to
+    # avoid showing pickup countdown while the SDR is already in-call.
+    if call.status in {CallStatus.BRIDGED, CallStatus.HUMAN_DETECTED}:
         return True
 
     payload_disposition = _extract_provider_disposition(raw_payload)
@@ -5790,6 +5796,13 @@ def _has_provider_answer_confirmation(call: CallSession, raw_payload: dict) -> b
 
 def _is_call_waiting_for_customer_pickup(call: CallSession | None) -> bool:
     if not call:
+        return False
+
+    if call.ended_at:
+        return False
+
+    display_status = _derive_display_status(call)
+    if display_status in {"answered", "completed", "sdr-cut"}:
         return False
 
     if call.status in {CallStatus.QUEUED, CallStatus.DIALING, CallStatus.RINGING}:
@@ -6099,7 +6112,7 @@ def _extract_provider_disposition(raw_payload: dict) -> str:
         return "cancelled"
     if has_any(("failed", "failure", "error", "rejected", "unreachable")):
         return "failed"
-    if has_any(("answered", "connected", "human_detected", "human")):
+    if has_any(("answered", "connected", "in-progress", "inprogress", "human_detected", "human")):
         return "answered"
     if has_any(("completed", "terminal", "hangup", "disconnected")):
         return "completed"
@@ -6119,7 +6132,7 @@ def _derive_display_status(call: CallSession) -> str:
         event_type
         and any(token in event_type for token in ("busy", "no-answer", "no_answer", "cancelled", "canceled", "failed"))
     )
-    connected_event = bool(event_type and any(token in event_type for token in ("answered", "connected")))
+    connected_event = bool(event_type and any(token in event_type for token in ("answered", "connected", "in-progress", "inprogress")))
     was_connected = bool(call.answered_at) or base_status == "answered" or payload_disposition == "answered" or connected_event
 
     if manual_hangup_requested and was_connected and not provider_negative_disposition and not event_negative_disposition:
@@ -6135,7 +6148,7 @@ def _derive_display_status(call: CallSession) -> str:
             return "no-answer"
         if any(token in event_type for token in ("cancelled", "canceled")):
             return "cancelled"
-        if any(token in event_type for token in ("answered", "connected")):
+        if any(token in event_type for token in ("answered", "connected", "in-progress", "inprogress")):
             return "answered"
         if any(token in event_type for token in ("failed",)):
             return "failed"
@@ -6432,10 +6445,8 @@ def _map_exotel_status_to_call_status(status_text: str) -> str:
         return CallStatus.FAILED
     if any(token in value for token in ("completed", "terminal", "hangup", "disconnected")):
         return CallStatus.COMPLETED
-    if any(token in value for token in ("answered", "connected")):
+    if any(token in value for token in ("answered", "connected", "in-progress", "inprogress")):
         return CallStatus.BRIDGED
-    if any(token in value for token in ("in-progress", "inprogress")):
-        return CallStatus.RINGING
     if "ring" in value:
         return CallStatus.RINGING
     if any(token in value for token in ("queued", "initiated", "start", "dialing", "progress")):
