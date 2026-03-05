@@ -2,13 +2,17 @@ import csv
 import io
 import json
 import logging
+import mimetypes
 import os
 import re
 import threading
+import tempfile
 from datetime import datetime, timedelta
-from urllib.parse import parse_qsl
+from pathlib import Path
+from urllib.parse import parse_qsl, urlparse
 from uuid import UUID, uuid4
 
+import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -42,6 +46,9 @@ from .models import (
     Lead,
     LeadDialState,
     ProviderType,
+    RecordingAsset,
+    RecordingSource,
+    TranscriptStatus,
 )
 
 logger = logging.getLogger("dialer.campaign")
@@ -49,6 +56,18 @@ logger = logging.getLogger("dialer.campaign")
 RUNTIME_EXOTEL_WAIT_AUDIO_CACHE_KEY = "dialer:runtime:exotel_wait_audio"
 WAIT_AUDIO_ALLOWED_EXTENSIONS = {"mp3", "wav", "ogg", "m4a"}
 WAIT_AUDIO_MAX_BYTES = int(os.getenv("EXOTEL_WAIT_AUDIO_MAX_BYTES", "5242880") or 5242880)
+RECORDING_UPLOAD_ALLOWED_EXTENSIONS = {"mp3", "wav", "ogg", "m4a"}
+RECORDING_UPLOAD_MAX_BYTES = int(os.getenv("RECORDING_UPLOAD_MAX_BYTES", "15728640") or 15728640)
+TRANSCRIPTION_BACKEND = str(os.getenv("TRANSCRIPTION_BACKEND") or "local_whisper").strip().lower()
+WHISPER_MODEL_NAME = str(os.getenv("WHISPER_MODEL") or "small").strip() or "small"
+WHISPER_LANGUAGE = str(os.getenv("WHISPER_LANGUAGE") or "").strip()
+WHISPER_DEVICE = str(os.getenv("WHISPER_DEVICE") or "cpu").strip() or "cpu"
+WHISPER_COMPUTE_TYPE = str(os.getenv("WHISPER_COMPUTE_TYPE") or "int8").strip() or "int8"
+WHISPER_BEAM_SIZE = max(1, int(os.getenv("WHISPER_BEAM_SIZE", "5") or 5))
+WHISPER_VAD_FILTER = str(os.getenv("WHISPER_VAD_FILTER", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+OPENAI_AUDIO_TRANSCRIPT_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
+_WHISPER_MODEL_INSTANCE = None
+_WHISPER_MODEL_LOCK = threading.Lock()
 
 
 def _debug_runtime(tag: str, payload: object) -> None:
@@ -102,6 +121,501 @@ def _assign_runtime_exotel_wait_url(provider: ExotelProvider) -> str:
     if wait_url:
         provider.wait_url = wait_url
     return wait_url
+
+
+def _normalize_transcript_segments(raw_segments: object) -> list[dict]:
+    if not isinstance(raw_segments, list):
+        return []
+
+    normalized: list[dict] = []
+    for item in raw_segments:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+
+        start_raw = item.get("start", item.get("start_time", item.get("from")))
+        end_raw = item.get("end", item.get("end_time", item.get("to")))
+
+        try:
+            start = max(0.0, float(start_raw)) if start_raw not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            start = 0.0
+
+        end: float | None
+        try:
+            end = max(0.0, float(end_raw)) if end_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            end = None
+
+        if end is not None and end < start:
+            end = start
+
+        normalized.append(
+            {
+                "start": round(start, 3),
+                "end": round(end, 3) if end is not None else None,
+                "text": text,
+            }
+        )
+
+    for index, segment in enumerate(normalized):
+        if segment.get("end") is not None:
+            continue
+        next_start = None
+        if index + 1 < len(normalized):
+            next_start = normalized[index + 1].get("start")
+        segment["end"] = round(float(next_start), 3) if next_start is not None else round(float(segment["start"]) + 1.2, 3)
+
+    return normalized
+
+
+def _recording_audio_url(recording: RecordingAsset, request: HttpRequest | None = None) -> str:
+    audio_url = str(recording.external_audio_url or "").strip()
+    if not audio_url and recording.audio_file:
+        try:
+            audio_url = str(recording.audio_file.url or "").strip()
+        except Exception:
+            audio_url = ""
+
+    if request and audio_url.startswith("/"):
+        return _build_absolute_media_url(request, audio_url)
+    return audio_url
+
+
+def _serialize_recording_asset(recording: RecordingAsset, request: HttpRequest | None = None, include_transcript: bool = False) -> dict:
+    title = str(recording.title or "").strip()
+    if not title and recording.call and recording.call.lead:
+        started_at = recording.call.started_at or recording.call.created_at
+        stamp = started_at.strftime("%Y-%m-%d %H:%M") if started_at else ""
+        title = f"{recording.call.lead.full_name}{f' ({stamp})' if stamp else ''}"
+
+    result = {
+        "id": recording.id,
+        "public_id": str(recording.public_id),
+        "source": recording.source,
+        "title": title or "Untitled Recording",
+        "audio_url": _recording_audio_url(recording, request=request),
+        "duration_seconds": recording.duration_seconds,
+        "duration_formatted": _format_seconds(recording.duration_seconds or 0) if recording.duration_seconds else "-",
+        "transcript_status": recording.transcript_status,
+        "transcript_error": str(recording.transcript_error or ""),
+        "has_transcript": bool(str(recording.transcript_text or "").strip()),
+        "created_at": recording.created_at.isoformat() if recording.created_at else None,
+        "updated_at": recording.updated_at.isoformat() if recording.updated_at else None,
+        "call_id": recording.call_id,
+        "call_public_id": str(recording.call.public_id) if recording.call else "",
+        "provider_call_uuid": str(recording.call.provider_call_uuid) if recording.call else "",
+        "contact_name": recording.call.lead.full_name if recording.call and recording.call.lead else "",
+        "contact_phone": recording.call.lead.phone_e164 if recording.call and recording.call.lead else "",
+        "agent_name": recording.call.agent.display_name if recording.call and recording.call.agent else "",
+    }
+    if include_transcript:
+        result["transcript_text"] = str(recording.transcript_text or "")
+        result["transcript_segments"] = _normalize_transcript_segments(recording.transcript_segments)
+    return result
+
+
+def _extract_call_transcript_payload(call: CallSession) -> dict:
+    raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
+    status = str(raw_payload.get("transcript_status") or "").strip().lower()
+    text = str(raw_payload.get("transcript") or "").strip()
+    segments = _normalize_transcript_segments(raw_payload.get("transcript_segments"))
+    if status not in {TranscriptStatus.NONE, TranscriptStatus.PROCESSING, TranscriptStatus.COMPLETED, TranscriptStatus.FAILED}:
+        status = TranscriptStatus.COMPLETED if text else TranscriptStatus.NONE
+    if text and status == TranscriptStatus.NONE:
+        status = TranscriptStatus.COMPLETED
+    return {
+        "status": status or TranscriptStatus.NONE,
+        "text": text,
+        "segments": segments,
+    }
+
+
+def _upsert_recording_asset_from_call(call: CallSession) -> tuple[RecordingAsset | None, bool]:
+    recording_url = str(call.recording_url or "").strip()
+    if not recording_url:
+        return None, False
+
+    started_at = call.started_at or call.created_at
+    title = call.lead.full_name if call.lead else "Call Recording"
+    if started_at:
+        title = f"{title} ({started_at.strftime('%Y-%m-%d %H:%M')})"
+
+    transcript_payload = _extract_call_transcript_payload(call)
+    defaults = {
+        "source": RecordingSource.EXOTEL,
+        "title": title[:255],
+        "external_audio_url": recording_url,
+        "duration_seconds": _duration_seconds_for_call(call) or None,
+        "transcript_status": transcript_payload["status"] or TranscriptStatus.NONE,
+        "transcript_text": transcript_payload["text"],
+        "transcript_segments": transcript_payload["segments"],
+    }
+
+    recording, created = RecordingAsset.objects.get_or_create(
+        call=call,
+        defaults=defaults,
+    )
+
+    update_fields: list[str] = []
+    if recording.source != RecordingSource.EXOTEL:
+        recording.source = RecordingSource.EXOTEL
+        update_fields.append("source")
+    if recording.external_audio_url != recording_url:
+        recording.external_audio_url = recording_url
+        update_fields.append("external_audio_url")
+    if title and recording.title != title[:255]:
+        recording.title = title[:255]
+        update_fields.append("title")
+
+    duration_seconds = _duration_seconds_for_call(call) or None
+    if duration_seconds and recording.duration_seconds != duration_seconds:
+        recording.duration_seconds = duration_seconds
+        update_fields.append("duration_seconds")
+
+    if transcript_payload["text"]:
+        if recording.transcript_text != transcript_payload["text"]:
+            recording.transcript_text = transcript_payload["text"]
+            update_fields.append("transcript_text")
+        normalized_segments = transcript_payload["segments"]
+        if normalized_segments and recording.transcript_segments != normalized_segments:
+            recording.transcript_segments = normalized_segments
+            update_fields.append("transcript_segments")
+        if recording.transcript_status != TranscriptStatus.COMPLETED:
+            recording.transcript_status = TranscriptStatus.COMPLETED
+            update_fields.append("transcript_status")
+        if recording.transcript_error:
+            recording.transcript_error = ""
+            update_fields.append("transcript_error")
+    elif recording.transcript_status in {TranscriptStatus.NONE, TranscriptStatus.PROCESSING}:
+        new_status = transcript_payload["status"] or TranscriptStatus.NONE
+        if new_status != recording.transcript_status:
+            recording.transcript_status = new_status
+            update_fields.append("transcript_status")
+
+    if update_fields:
+        recording.save(update_fields=list(dict.fromkeys(update_fields + ["updated_at"])))
+    return recording, bool(created or update_fields)
+
+
+def _sync_recording_assets_from_exotel_calls(sync_exotel: bool, sync_limit: int) -> dict:
+    sync_limit = max(1, min(int(sync_limit or 100), 500))
+
+    if sync_exotel:
+        calls_for_sync = list(
+            CallSession.objects.select_related("lead", "agent")
+            .filter(provider=ProviderType.EXOTEL)
+            .exclude(provider_call_uuid="")
+            .order_by("-created_at")[:sync_limit]
+        )
+        if calls_for_sync:
+            _sync_exotel_call_details(calls_for_sync, max_fetch=sync_limit)
+
+    calls_with_recordings = list(
+        CallSession.objects.select_related("lead", "agent")
+        .exclude(recording_url="")
+        .order_by("-created_at")[: sync_limit * 3]
+    )
+
+    created = 0
+    updated = 0
+    processed = 0
+    for call in calls_with_recordings:
+        recording, changed = _upsert_recording_asset_from_call(call)
+        if not recording:
+            continue
+        processed += 1
+        if changed:
+            if recording.created_at and recording.updated_at and recording.created_at == recording.updated_at:
+                created += 1
+            else:
+                updated += 1
+
+    return {
+        "processed_calls": processed,
+        "created": created,
+        "updated": updated,
+        "sync_exotel": bool(sync_exotel),
+    }
+
+
+def _looks_like_exotel_url(audio_url: str) -> bool:
+    parsed = urlparse(str(audio_url or "").strip())
+    host = str(parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    if "exotel" in host:
+        return True
+    configured_host = str(os.getenv("EXOTEL_SUBDOMAIN", "") or "").replace("@", "").strip().lower()
+    return bool(configured_host and configured_host in host)
+
+
+def _exotel_recording_auth() -> tuple[str, str] | None:
+    api_key = str(os.getenv("EXOTEL_API_KEY") or "").strip()
+    api_token = str(os.getenv("EXOTEL_API_TOKEN") or "").strip()
+    if not api_key or not api_token:
+        return None
+    return (api_key, api_token)
+
+
+def _download_audio_to_tempfile(audio_url: str) -> tuple[str | None, str | None, str | None]:
+    url_text = str(audio_url or "").strip()
+    if not url_text:
+        return None, None, "missing_audio_url"
+
+    request_kwargs: dict = {
+        "timeout": 120,
+        "stream": True,
+    }
+    if _looks_like_exotel_url(url_text):
+        auth = _exotel_recording_auth()
+        if auth:
+            request_kwargs["auth"] = auth
+
+    try:
+        response = requests.get(url_text, **request_kwargs)
+    except requests.RequestException as exc:
+        return None, None, str(exc)
+
+    if response.status_code >= 400:
+        return None, None, f"audio_download_failed_http_{response.status_code}"
+
+    content_type = str(response.headers.get("content-type") or "").split(";")[0].strip().lower()
+    parsed = urlparse(url_text)
+    suffix = Path(parsed.path).suffix.strip()
+    if not suffix:
+        guessed_ext = mimetypes.guess_extension(content_type) if content_type else None
+        suffix = guessed_ext or ".mp3"
+
+    fd, temp_path = tempfile.mkstemp(prefix="recording_", suffix=suffix)
+    os.close(fd)
+    try:
+        with open(temp_path, "wb") as output:
+            for chunk in response.iter_content(chunk_size=1024 * 64):
+                if not chunk:
+                    continue
+                output.write(chunk)
+    except Exception as exc:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        return None, None, str(exc)
+
+    return temp_path, content_type or None, None
+
+
+def _get_whisper_model_instance():
+    global _WHISPER_MODEL_INSTANCE
+    if _WHISPER_MODEL_INSTANCE is not None:
+        return _WHISPER_MODEL_INSTANCE
+
+    with _WHISPER_MODEL_LOCK:
+        if _WHISPER_MODEL_INSTANCE is not None:
+            return _WHISPER_MODEL_INSTANCE
+        try:
+            from faster_whisper import WhisperModel
+        except Exception as exc:
+            raise RuntimeError("faster-whisper is not installed. Add it to backend requirements.") from exc
+
+        _WHISPER_MODEL_INSTANCE = WhisperModel(
+            WHISPER_MODEL_NAME,
+            device=WHISPER_DEVICE,
+            compute_type=WHISPER_COMPUTE_TYPE,
+        )
+    return _WHISPER_MODEL_INSTANCE
+
+
+def _transcribe_audio_with_local_whisper(file_path: str) -> dict:
+    try:
+        model = _get_whisper_model_instance()
+        segments_iter, info = model.transcribe(
+            file_path,
+            language=WHISPER_LANGUAGE or None,
+            beam_size=WHISPER_BEAM_SIZE,
+            vad_filter=WHISPER_VAD_FILTER,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"local_whisper_error: {exc}"}
+
+    segments: list[dict] = []
+    texts: list[str] = []
+    for segment in segments_iter:
+        text = str(getattr(segment, "text", "") or "").strip()
+        if not text:
+            continue
+        start = max(0.0, float(getattr(segment, "start", 0.0) or 0.0))
+        end = max(start, float(getattr(segment, "end", start) or start))
+        segments.append(
+            {
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "text": text,
+            }
+        )
+        texts.append(text)
+
+    transcript_text = " ".join(texts).strip()
+    if not transcript_text and segments:
+        transcript_text = " ".join(str(segment.get("text") or "") for segment in segments).strip()
+
+    meta = {}
+    if info is not None:
+        meta = {
+            "language": str(getattr(info, "language", "") or ""),
+            "language_probability": float(getattr(info, "language_probability", 0.0) or 0.0),
+            "duration": float(getattr(info, "duration", 0.0) or 0.0),
+        }
+
+    return {
+        "ok": True,
+        "text": transcript_text,
+        "segments": _normalize_transcript_segments(segments),
+        "raw": {"provider": "local_whisper", "meta": meta},
+    }
+
+
+def _transcribe_audio_with_openai_whisper_api(file_path: str, mime_type: str | None = None) -> dict:
+    api_key = str(os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return {"ok": False, "error": "OPENAI_API_KEY not configured"}
+
+    model = str(os.getenv("OPENAI_WHISPER_MODEL") or "whisper-1").strip() or "whisper-1"
+    language = str(os.getenv("OPENAI_WHISPER_LANGUAGE") or "").strip()
+    timeout_seconds = max(30, int(os.getenv("OPENAI_WHISPER_TIMEOUT_SECONDS", "600") or 600))
+
+    content_type = mime_type or mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    data: list[tuple[str, str]] = [
+        ("model", model),
+        ("response_format", "verbose_json"),
+    ]
+    if language:
+        data.append(("language", language))
+
+    try:
+        with open(file_path, "rb") as audio_file:
+            files = {"file": (Path(file_path).name, audio_file, content_type)}
+            response = requests.post(
+                OPENAI_AUDIO_TRANSCRIPT_ENDPOINT,
+                headers=headers,
+                data=data,
+                files=files,
+                timeout=timeout_seconds,
+            )
+    except (OSError, requests.RequestException) as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"raw_text": response.text}
+
+    if response.status_code >= 400:
+        error_text = ""
+        if isinstance(payload, dict):
+            err = payload.get("error")
+            if isinstance(err, dict):
+                error_text = str(err.get("message") or err.get("type") or "")
+            elif err:
+                error_text = str(err)
+        return {
+            "ok": False,
+            "error": error_text or f"openai_http_{response.status_code}",
+            "raw": payload,
+        }
+
+    text = str(payload.get("text") or "").strip() if isinstance(payload, dict) else ""
+    segments = _normalize_transcript_segments(payload.get("segments") if isinstance(payload, dict) else [])
+    if text and not segments:
+        segments = [{"start": 0.0, "end": max(1.0, round(len(text) / 16.0, 3)), "text": text}]
+
+    return {
+        "ok": True,
+        "text": text,
+        "segments": segments,
+        "raw": payload if isinstance(payload, dict) else {},
+    }
+
+
+def _transcribe_audio_with_whisper(file_path: str, mime_type: str | None = None) -> dict:
+    backend = TRANSCRIPTION_BACKEND
+    if backend in {"openai", "openai_whisper", "openai_api"}:
+        return _transcribe_audio_with_openai_whisper_api(file_path, mime_type=mime_type)
+    return _transcribe_audio_with_local_whisper(file_path)
+
+
+def _save_call_transcript_payload(call: CallSession, transcript_status: str, text: str, segments: list[dict], error_text: str = "") -> None:
+    raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
+    raw_payload["transcript_status"] = transcript_status
+    raw_payload["transcript"] = text
+    raw_payload["transcript_segments"] = segments
+    if error_text:
+        raw_payload["transcript_error"] = error_text
+    else:
+        raw_payload.pop("transcript_error", None)
+    call.raw_provider_payload = raw_payload
+    call.save(update_fields=["raw_provider_payload"])
+
+
+def _run_recording_transcription(recording: RecordingAsset) -> dict:
+    temp_download_path = None
+    audio_path = ""
+    mime_type = None
+    try:
+        if recording.audio_file:
+            try:
+                audio_path = str(recording.audio_file.path)
+            except Exception:
+                audio_path = ""
+        if not audio_path:
+            audio_path, mime_type, download_error = _download_audio_to_tempfile(recording.external_audio_url)
+            if download_error or not audio_path:
+                return {"ok": False, "error": download_error or "unable_to_download_audio"}
+            temp_download_path = audio_path
+
+        result = _transcribe_audio_with_whisper(audio_path, mime_type=mime_type)
+        if not result.get("ok"):
+            return result
+
+        transcript_text = str(result.get("text") or "").strip()
+        transcript_segments = _normalize_transcript_segments(result.get("segments"))
+        recording.transcript_text = transcript_text
+        recording.transcript_segments = transcript_segments
+        recording.transcript_status = TranscriptStatus.COMPLETED if transcript_text else TranscriptStatus.FAILED
+        recording.transcript_error = "" if transcript_text else "empty_transcript"
+        recording.save(
+            update_fields=[
+                "transcript_text",
+                "transcript_segments",
+                "transcript_status",
+                "transcript_error",
+                "updated_at",
+            ]
+        )
+
+        if recording.call:
+            _save_call_transcript_payload(
+                recording.call,
+                transcript_status=recording.transcript_status,
+                text=recording.transcript_text,
+                segments=recording.transcript_segments if isinstance(recording.transcript_segments, list) else [],
+                error_text=recording.transcript_error,
+            )
+
+        return {
+            "ok": True,
+            "recording": recording,
+            "segments_count": len(transcript_segments),
+        }
+    finally:
+        if temp_download_path:
+            try:
+                os.remove(temp_download_path)
+            except OSError:
+                pass
 
 
 def _active_call_not_ended_filter() -> Q:
@@ -1622,6 +2136,150 @@ def list_call_logs(request: HttpRequest) -> JsonResponse:
             "results": paged_results,
             "summary": summary_filtered,
             "summary_all": summary_all,
+        }
+    )
+
+
+@require_GET
+def list_recordings(request: HttpRequest) -> JsonResponse:
+    page = _parse_positive_int(request.GET.get("page"), 1)
+    page_size = max(1, min(_parse_positive_int(request.GET.get("page_size"), 25), 100))
+    search = str(request.GET.get("search") or "").strip()
+    source_filter = str(request.GET.get("source") or "").strip().lower()
+    sync_exotel = _parse_bool(request.GET.get("sync_exotel"), False)
+    sync_limit = max(1, min(_parse_positive_int(request.GET.get("sync_limit"), 120), 500))
+
+    sync_result = _sync_recording_assets_from_exotel_calls(sync_exotel=sync_exotel, sync_limit=sync_limit)
+
+    queryset = RecordingAsset.objects.select_related("call__lead", "call__agent").order_by("-created_at")
+    if source_filter in {RecordingSource.EXOTEL, RecordingSource.UPLOAD}:
+        queryset = queryset.filter(source=source_filter)
+    if search:
+        queryset = queryset.filter(
+            Q(title__icontains=search)
+            | Q(call__lead__full_name__icontains=search)
+            | Q(call__lead__phone_e164__icontains=search)
+            | Q(call__provider_call_uuid__icontains=search)
+        )
+
+    results = list(queryset)
+    count = len(results)
+    offset = (page - 1) * page_size
+    paged = results[offset : offset + page_size]
+
+    return JsonResponse(
+        {
+            "count": count,
+            "page": page,
+            "page_size": page_size,
+            "results": [_serialize_recording_asset(recording, request=request, include_transcript=False) for recording in paged],
+            "sync": sync_result,
+        }
+    )
+
+
+@csrf_exempt
+@require_POST
+def upload_recording(request: HttpRequest) -> JsonResponse:
+    upload = request.FILES.get("file")
+    if not upload:
+        return JsonResponse({"error": "audio file is required under 'file'"}, status=400)
+
+    file_size = int(getattr(upload, "size", 0) or 0)
+    if file_size > RECORDING_UPLOAD_MAX_BYTES:
+        return JsonResponse(
+            {
+                "error": "file_too_large",
+                "max_bytes": RECORDING_UPLOAD_MAX_BYTES,
+            },
+            status=400,
+        )
+
+    original_name = str(getattr(upload, "name", "") or "recording").strip()
+    extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+    if extension not in RECORDING_UPLOAD_ALLOWED_EXTENSIONS:
+        return JsonResponse(
+            {
+                "error": "unsupported_file_type",
+                "allowed_extensions": sorted(RECORDING_UPLOAD_ALLOWED_EXTENSIONS),
+            },
+            status=400,
+        )
+
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", original_name).strip("._")
+    if not safe_name:
+        safe_name = f"recording.{extension}"
+
+    title = str(request.POST.get("title") or "").strip() or original_name
+    recording = RecordingAsset(
+        source=RecordingSource.UPLOAD,
+        title=title[:255],
+        transcript_status=TranscriptStatus.NONE,
+    )
+    recording.audio_file.save(f"{uuid4().hex}_{safe_name}", upload, save=False)
+    recording.save()
+    return JsonResponse(
+        {
+            "ok": True,
+            "recording": _serialize_recording_asset(recording, request=request, include_transcript=True),
+        },
+        status=201,
+    )
+
+
+@require_GET
+def get_recording(request: HttpRequest, recording_public_id: UUID) -> JsonResponse:
+    recording = get_object_or_404(
+        RecordingAsset.objects.select_related("call__lead", "call__agent"),
+        public_id=recording_public_id,
+    )
+
+    if recording.call and recording.source == RecordingSource.EXOTEL:
+        _upsert_recording_asset_from_call(recording.call)
+        recording.refresh_from_db()
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "recording": _serialize_recording_asset(recording, request=request, include_transcript=True),
+        }
+    )
+
+
+@csrf_exempt
+@require_POST
+def transcribe_recording(request: HttpRequest, recording_public_id: UUID) -> JsonResponse:
+    recording = get_object_or_404(
+        RecordingAsset.objects.select_related("call__lead", "call__agent"),
+        public_id=recording_public_id,
+    )
+
+    if recording.call and recording.source == RecordingSource.EXOTEL:
+        _upsert_recording_asset_from_call(recording.call)
+        recording.refresh_from_db()
+
+    recording.transcript_status = TranscriptStatus.PROCESSING
+    recording.transcript_error = ""
+    recording.save(update_fields=["transcript_status", "transcript_error", "updated_at"])
+    if recording.call:
+        _save_call_transcript_payload(recording.call, TranscriptStatus.PROCESSING, "", [], error_text="")
+
+    transcribe_result = _run_recording_transcription(recording)
+    if not transcribe_result.get("ok"):
+        error_text = str(transcribe_result.get("error") or "transcription_failed").strip()
+        recording.transcript_status = TranscriptStatus.FAILED
+        recording.transcript_error = error_text
+        recording.save(update_fields=["transcript_status", "transcript_error", "updated_at"])
+        if recording.call:
+            _save_call_transcript_payload(recording.call, TranscriptStatus.FAILED, "", [], error_text=error_text)
+        return JsonResponse({"ok": False, "error": error_text}, status=502)
+
+    recording.refresh_from_db()
+    return JsonResponse(
+        {
+            "ok": True,
+            "recording": _serialize_recording_asset(recording, request=request, include_transcript=True),
+            "segments_count": int(transcribe_result.get("segments_count") or 0),
         }
     )
 

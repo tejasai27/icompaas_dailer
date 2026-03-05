@@ -8,6 +8,7 @@ from .models import (
     CRMSyncLog,
     Lead,
     LeadDialState,
+    RecordingAsset,
 )
 
 
@@ -60,3 +61,10 @@ class CallDispositionAdmin(admin.ModelAdmin):
 class CRMSyncLogAdmin(admin.ModelAdmin):
     list_display = ("id", "call", "target", "status", "retry_count", "created_at")
     list_filter = ("target", "status")
+
+
+@admin.register(RecordingAsset)
+class RecordingAssetAdmin(admin.ModelAdmin):
+    list_display = ("public_id", "source", "call", "title", "transcript_status", "created_at")
+    list_filter = ("source", "transcript_status")
+    search_fields = ("title", "external_audio_url", "call__provider_call_uuid")

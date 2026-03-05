@@ -221,3 +221,48 @@ class CRMSyncLog(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["target", "status", "created_at"])]
+
+
+class RecordingSource(models.TextChoices):
+    EXOTEL = "exotel", "Exotel"
+    UPLOAD = "upload", "Upload"
+
+
+class TranscriptStatus(models.TextChoices):
+    NONE = "none", "None"
+    PROCESSING = "processing", "Processing"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+
+
+class RecordingAsset(models.Model):
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    source = models.CharField(max_length=20, choices=RecordingSource.choices)
+    call = models.OneToOneField(
+        CallSession,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="recording_asset",
+    )
+    title = models.CharField(max_length=255, blank=True)
+    audio_file = models.FileField(upload_to="dialer/recordings/", blank=True)
+    external_audio_url = models.URLField(blank=True)
+    duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    transcript_status = models.CharField(max_length=20, choices=TranscriptStatus.choices, default=TranscriptStatus.NONE)
+    transcript_text = models.TextField(blank=True)
+    transcript_segments = models.JSONField(default=list, blank=True)
+    transcript_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["source", "created_at"]),
+            models.Index(fields=["transcript_status", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        if self.title:
+            return self.title
+        return f"{self.source}:{self.public_id}"

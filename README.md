@@ -28,6 +28,10 @@ Monorepo setup for a React + Django power dialer with PostgreSQL and Redis, desi
 - `POST /api/v1/dialer/leads/manual/`
 - `GET /api/v1/dialer/call-logs/`
 - `POST /api/v1/dialer/call-logs/sync/exotel/`
+- `GET /api/v1/dialer/recordings/`
+- `POST /api/v1/dialer/recordings/upload/`
+- `GET /api/v1/dialer/recordings/<recording_public_id>/`
+- `POST /api/v1/dialer/recordings/<recording_public_id>/transcribe/`
 - `POST /api/v1/dialer/calls/start/exotel/`
 - `POST /api/v1/dialer/webhooks/exotel/`
 
@@ -49,6 +53,19 @@ Direct upload option:
 - Open Settings page -> `Exotel Wait Audio`
 - Upload `mp3/wav/ogg/m4a`
 - Backend hosts it under `/media/...` and uses it as Exotel `WaitUrl`
+
+## Whisper Transcription Setup
+In `.env` set:
+- `TRANSCRIPTION_BACKEND=local_whisper`
+- `WHISPER_MODEL=small` (or `base`, `medium`, `large-v3`)
+- `WHISPER_DEVICE=cpu` (or `cuda`)
+- `WHISPER_COMPUTE_TYPE=int8` (or `float16` on GPU)
+- `WHISPER_LANGUAGE=` (optional, e.g. `en`)
+- `WHISPER_VAD_FILTER=0` (set `1` only if you want VAD segmentation)
+
+Optional OpenAI fallback:
+- set `TRANSCRIPTION_BACKEND=openai`
+- then configure `OPENAI_API_KEY`, `OPENAI_WHISPER_MODEL`, `OPENAI_WHISPER_LANGUAGE`, `OPENAI_WHISPER_TIMEOUT_SECONDS`
 
 ## Make a Test Call
 ```bash

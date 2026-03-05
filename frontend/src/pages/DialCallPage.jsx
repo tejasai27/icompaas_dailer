@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Box,
@@ -56,13 +56,16 @@ export default function DialCallPage() {
     const [refreshing, setRefreshing] = useState(false);
     const [hangupLoading, setHangupLoading] = useState(false);
     const [savingDisposition, setSavingDisposition] = useState(false);
-    const [showWrapUp, setShowWrapUp] = useState(false);
     const [outcome, setOutcome] = useState('follow_up');
     const [notes, setNotes] = useState('');
     const [muted, setMuted] = useState(false);
     const [speakerOn, setSpeakerOn] = useState(true);
     const [keypadOpen, setKeypadOpen] = useState(false);
     const [timerTick, setTimerTick] = useState(0);
+    const [terminalAtMs, setTerminalAtMs] = useState(null);
+    const [hasEditedDisposition, setHasEditedDisposition] = useState(false);
+    const [autosaveState, setAutosaveState] = useState('idle');
+    const lastSavedRef = useRef({ outcome: '', notes: '' });
 
     const internalStatus = String(call?.internal_status || '').toLowerCase();
     const displayStatus = String(call?.status || '').toLowerCase();
@@ -80,9 +83,11 @@ export default function DialCallPage() {
     const elapsedSeconds = useMemo(() => {
         const startedAt = call?.started_at || call?.initiated_at;
         if (!startedAt) return 0;
-        const diff = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+        const startedMs = new Date(startedAt).getTime();
+        const endedMs = call?.ended_at ? new Date(call.ended_at).getTime() : terminalAtMs || Date.now();
+        const diff = Math.floor((endedMs - startedMs) / 1000);
         return Math.max(0, diff);
-    }, [call?.started_at, call?.initiated_at, timerTick]);
+    }, [call?.started_at, call?.initiated_at, call?.ended_at, terminalAtMs, timerTick]);
 
     const stageText = isTerminal ? 'Call Ended' : isConnected ? 'In Call' : 'Calling';
 
@@ -97,11 +102,17 @@ export default function DialCallPage() {
             const data = await request(`/api/v1/dialer/calls/${callPublicId}/?sync_exotel=1`);
             const current = data?.call || null;
             setCall(current);
-            if (current?.call_outcome) {
-                setOutcome((previous) => (previous === 'follow_up' ? String(current.call_outcome) : previous));
-            }
-            if (typeof current?.agent_notes === 'string' && current.agent_notes) {
-                setNotes((previous) => (previous ? previous : current.agent_notes));
+            const serverOutcomeRaw = String(current?.call_outcome || '').trim();
+            const serverOutcome = serverOutcomeRaw || 'follow_up';
+            const serverNotes = typeof current?.agent_notes === 'string' ? current.agent_notes : '';
+            lastSavedRef.current = {
+                outcome: serverOutcome,
+                notes: serverNotes,
+            };
+            if (!hasEditedDisposition) {
+                setOutcome(serverOutcome);
+                setNotes(serverNotes);
+                setAutosaveState(serverOutcomeRaw || serverNotes ? 'saved' : 'idle');
             }
         } catch (error) {
             toast.error(error.message || 'Failed to load call status');
@@ -119,11 +130,20 @@ export default function DialCallPage() {
     }, [callPublicId]);
 
     useEffect(() => {
+        if (isTerminal) return undefined;
         const timer = setInterval(() => {
             setTimerTick((tick) => tick + 1);
         }, 1000);
         return () => clearInterval(timer);
-    }, []);
+    }, [isTerminal]);
+
+    useEffect(() => {
+        if (isTerminal) {
+            setTerminalAtMs((previous) => previous || Date.now());
+            return;
+        }
+        setTerminalAtMs(null);
+    }, [isTerminal, callPublicId]);
 
     useEffect(() => {
         if (!callPublicId) return undefined;
@@ -132,20 +152,13 @@ export default function DialCallPage() {
             loadCall({ silent: true });
         }, 4000);
         return () => clearInterval(poll);
-    }, [callPublicId, isTerminal]);
-
-    useEffect(() => {
-        if (isTerminal) {
-            setShowWrapUp(true);
-        }
-    }, [isTerminal]);
+    }, [callPublicId, isTerminal, hasEditedDisposition]);
 
     async function handleHangup() {
         if (!callPublicId) return;
         setHangupLoading(true);
         try {
             await request(`/api/v1/dialer/calls/${callPublicId}/hangup/`, { method: 'POST' });
-            setShowWrapUp(true);
             toast.success('Call end requested');
             await loadCall({ silent: true });
         } catch (error) {
@@ -155,13 +168,13 @@ export default function DialCallPage() {
         }
     }
 
-    async function handleSaveDisposition() {
+    async function handleSaveDisposition({ silent = false } = {}) {
         if (!callPublicId) return;
         if (!outcome) {
-            toast.error('Select call outcome');
+            if (!silent) toast.error('Select call outcome');
             return;
         }
-        setSavingDisposition(true);
+        if (!silent) setSavingDisposition(true);
         try {
             const data = await request(`/api/v1/dialer/calls/${callPublicId}/disposition/`, {
                 method: 'POST',
@@ -170,14 +183,37 @@ export default function DialCallPage() {
                     notes,
                 }),
             });
-            setCall(data?.call || call);
-            toast.success('Outcome and notes saved');
+            if (data?.call) {
+                setCall(data.call);
+            }
+            lastSavedRef.current = { outcome, notes };
+            setAutosaveState('saved');
+            if (!silent) toast.success('Outcome and notes saved');
         } catch (error) {
-            toast.error(error.message || 'Failed to save disposition');
+            setAutosaveState('error');
+            if (!silent) toast.error(error.message || 'Failed to save disposition');
         } finally {
-            setSavingDisposition(false);
+            if (!silent) setSavingDisposition(false);
         }
     }
+
+    useEffect(() => {
+        if (!callPublicId || !hasEditedDisposition) return undefined;
+
+        const unchanged =
+            lastSavedRef.current.outcome === String(outcome || '') &&
+            lastSavedRef.current.notes === String(notes || '');
+        if (unchanged) {
+            setAutosaveState('saved');
+            return undefined;
+        }
+
+        setAutosaveState('saving');
+        const timer = setTimeout(() => {
+            handleSaveDisposition({ silent: true });
+        }, 900);
+        return () => clearTimeout(timer);
+    }, [callPublicId, hasEditedDisposition, outcome, notes]);
 
     function goBackToDial() {
         const path = campaignId ? `/dial?campaign_id=${encodeURIComponent(campaignId)}` : '/dial';
@@ -255,6 +291,9 @@ export default function DialCallPage() {
                                         Keypad
                                     </Button>
                                 </Box>
+                                <Typography variant="caption" color="text.secondary">
+                                    Mute and Speaker are local UI controls only and are not stored in DB.
+                                </Typography>
 
                                 {!isTerminal ? (
                                     <Button
@@ -285,49 +324,67 @@ export default function DialCallPage() {
                                 Call Wrap-Up
                             </Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                Save call outcome and notes after call.
+                                Notes and outcome autosave during the call and are stored in DB.
                             </Typography>
 
-                            {!showWrapUp && !isTerminal ? (
-                                <Alert severity="info">
-                                    Outcome form will open after you end the call.
-                                </Alert>
-                            ) : (
-                                <>
-                                    <TextField
-                                        fullWidth
-                                        select
-                                        label="Call Outcome"
-                                        value={outcome}
-                                        onChange={(event) => setOutcome(event.target.value)}
-                                        sx={{ mb: 2 }}
-                                    >
-                                        {OUTCOME_OPTIONS.map((item) => (
-                                            <MenuItem key={item.value} value={item.value}>
-                                                {item.label}
-                                            </MenuItem>
-                                        ))}
-                                    </TextField>
-                                    <TextField
-                                        fullWidth
-                                        multiline
-                                        minRows={4}
-                                        label="Notes"
-                                        value={notes}
-                                        onChange={(event) => setNotes(event.target.value)}
-                                        placeholder="Add summary, objections, next step, follow-up context..."
-                                        sx={{ mb: 2 }}
-                                    />
-                                    <Button
-                                        fullWidth
-                                        variant="contained"
-                                        onClick={handleSaveDisposition}
-                                        disabled={savingDisposition}
-                                    >
-                                        {savingDisposition ? 'Saving...' : 'Save Outcome & Notes'}
-                                    </Button>
-                                </>
-                            )}
+                            <TextField
+                                fullWidth
+                                select
+                                label="Call Outcome"
+                                value={outcome}
+                                onChange={(event) => {
+                                    setOutcome(event.target.value);
+                                    setHasEditedDisposition(true);
+                                }}
+                                sx={{ mb: 2 }}
+                            >
+                                {OUTCOME_OPTIONS.map((item) => (
+                                    <MenuItem key={item.value} value={item.value}>
+                                        {item.label}
+                                    </MenuItem>
+                                ))}
+                            </TextField>
+                            <TextField
+                                fullWidth
+                                multiline
+                                minRows={4}
+                                label="Notes"
+                                value={notes}
+                                onChange={(event) => {
+                                    setNotes(event.target.value);
+                                    setHasEditedDisposition(true);
+                                }}
+                                placeholder="Add summary, objections, next step, follow-up context..."
+                                sx={{ mb: 2 }}
+                            />
+                            <Alert
+                                severity={
+                                    autosaveState === 'error'
+                                        ? 'error'
+                                        : autosaveState === 'saving'
+                                            ? 'info'
+                                            : autosaveState === 'saved'
+                                                ? 'success'
+                                                : 'info'
+                                }
+                                sx={{ mb: 2 }}
+                            >
+                                {autosaveState === 'error'
+                                    ? 'Autosave failed. Use Save button.'
+                                    : autosaveState === 'saving'
+                                        ? 'Saving notes and outcome...'
+                                        : autosaveState === 'saved'
+                                            ? 'Notes and outcome saved in DB.'
+                                            : 'Changes will autosave while you type.'}
+                            </Alert>
+                            <Button
+                                fullWidth
+                                variant="contained"
+                                onClick={() => handleSaveDisposition({ silent: false })}
+                                disabled={savingDisposition}
+                            >
+                                {savingDisposition ? 'Saving...' : 'Save Outcome & Notes'}
+                            </Button>
                         </CardContent>
                     </Card>
                 </Grid>

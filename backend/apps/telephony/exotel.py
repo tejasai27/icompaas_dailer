@@ -43,6 +43,18 @@ class ExotelProvider(TelephonyProvider):
     def _auth(self) -> HTTPBasicAuth:
         return HTTPBasicAuth(self.api_key, self.api_token)
 
+    @staticmethod
+    def _is_start_playback_error(http_status: int, raw_payload: Any) -> bool:
+        if int(http_status or 0) != 400 or not isinstance(raw_payload, dict):
+            return False
+        rest_error = raw_payload.get("RestException")
+        if not isinstance(rest_error, dict):
+            return False
+        message = str(rest_error.get("Message") or "").strip().lower()
+        if not message:
+            return False
+        return "startplaybackvalue" in message or "start playback" in message
+
     def _normalize_provider_url(self, value: str) -> str:
         text = str(value or "").strip()
         if not text:
@@ -79,10 +91,12 @@ class ExotelProvider(TelephonyProvider):
 
         # Optional pre-connect audio playback (e.g., "Please wait while we connect you").
         # Value is typically an audio URL supported by Exotel.
+        start_playback_enabled = False
         if self.start_playback_value:
             payload.append(("StartPlaybackValue", self.start_playback_value))
             if self.start_playback_to in {"callee", "both"}:
                 payload.append(("StartPlaybackTo", "Both" if self.start_playback_to == "both" else "Callee"))
+            start_playback_enabled = True
 
         # Enable recording by default unless explicitly disabled via env.
         record_calls_raw = str(os.getenv("EXOTEL_RECORD_CALLS", "1")).strip().lower()
@@ -147,6 +161,44 @@ class ExotelProvider(TelephonyProvider):
                 "raw_payload": raw_payload,
             },
         )
+
+        if start_playback_enabled and self._is_start_playback_error(response.status_code, raw_payload):
+            retry_payload = [
+                pair
+                for pair in payload
+                if pair[0] not in {"StartPlaybackValue", "StartPlaybackTo"}
+            ]
+            _debug_exotel(
+                "initiate_call_retry_without_start_playback",
+                {
+                    "endpoint": endpoint,
+                    "reason": "start_playback_rejected",
+                    "status_code": response.status_code,
+                },
+            )
+            try:
+                response = requests.post(
+                    endpoint,
+                    data=retry_payload,
+                    auth=self._auth(),
+                    timeout=self.timeout_seconds,
+                )
+            except requests.RequestException as exc:
+                return DialResponse(provider_call_id="", accepted=False, raw={"error": str(exc)})
+
+            try:
+                raw_payload = response.json()
+            except ValueError:
+                raw_payload = {"raw_text": response.text}
+
+            _debug_exotel(
+                "initiate_call_retry_response",
+                {
+                    "endpoint": endpoint,
+                    "status_code": response.status_code,
+                    "raw_payload": raw_payload,
+                },
+            )
 
         if response.status_code >= 400:
             return DialResponse(

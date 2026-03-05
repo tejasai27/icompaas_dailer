@@ -206,6 +206,7 @@ export default function CallLogsPage() {
                                 { label: 'Duration', value: selected.duration_formatted },
                                 { label: 'Agent', value: selected.agent_name },
                                 { label: 'Campaign', value: selected.campaign_name },
+                                { label: 'Outcome', value: selected.call_outcome || '-' },
                                 { label: 'Date', value: new Date(selected.initiated_at).toLocaleString() },
                             ].map(({ label, value }) => (
                                 <Grid item xs={6} key={label}>
@@ -214,6 +215,20 @@ export default function CallLogsPage() {
                                 </Grid>
                             ))}
                         </Grid>
+                        {selected.recording_url && (
+                            <Box sx={{ mt: 2 }}>
+                                <Typography variant="subtitle2" fontWeight={600} mb={1}>Recording</Typography>
+                                <audio controls preload="none" src={selected.recording_url} style={{ width: '100%' }} />
+                            </Box>
+                        )}
+                        <Box sx={{ mt: 2 }}>
+                            <Typography variant="subtitle2" fontWeight={600} mb={1}>Notes</Typography>
+                            <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(99,102,241,0.05)' }}>
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+                                    {selected.agent_notes || 'No notes added.'}
+                                </Typography>
+                            </Box>
+                        </Box>
                         {selected.transcript && (
                             <Box sx={{ mt: 2 }}>
                                 <Typography variant="subtitle2" fontWeight={600} mb={1}>📝 Transcript</Typography>
