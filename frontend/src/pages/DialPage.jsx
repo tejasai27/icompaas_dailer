@@ -80,7 +80,7 @@ export default function DialPage() {
                     setAgentId(String(rows[0].id));
                 }
             } catch (error) {
-                toast.error(error.message || 'Failed to load agents');
+                toast.error(error.message || 'Failed to load SDRs');
             } finally {
                 setLoadingAgents(false);
             }
@@ -193,10 +193,22 @@ export default function DialPage() {
         return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     }
 
+    const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
+    const formatCallStatus = (status) => {
+        const normalized = normalizeCallStatus(status);
+        if (!normalized) return '-';
+        if (normalized === 'sdr-cut') return 'SDR Cut the Call';
+        return normalized
+            .split('-')
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(' ');
+    };
+
     const activeCall = campaign?.active_call || null;
     const waitingForPickup = activeCall?.stage === 'waiting_for_pickup';
     const pickupLeftSeconds = Number(activeCall?.pickup_seconds_left || 0);
-    const lastCallStatus = String(campaign?.last_call_result?.display_status || '').toLowerCase();
+    const lastCallStatus = normalizeCallStatus(campaign?.last_call_result?.display_status);
 
     useEffect(() => {
         if (!campaignId) return undefined;
@@ -231,7 +243,7 @@ export default function DialPage() {
         const agentIdNum = Number(agentId);
         const agentPhoneValue = agentPhone.trim();
         if (!leadId || !agentIdNum || !agentPhoneValue) {
-            toast.error('Lead, agent and agent phone are required');
+            toast.error('Lead, SDR and SDR phone are required');
             setCalling(false);
             return;
         }
@@ -512,13 +524,17 @@ export default function DialPage() {
                                                 </Typography>
                                             ) : (
                                                 <Typography variant="body2" sx={{ mb: 1.5, color: '#10b981' }}>
-                                                    Agent is in call{activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.
+                                                    SDR is in call{activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.
                                                 </Typography>
                                             )
                                         ) : cooldownSeconds > 0 ? (
                                             lastCallStatus === 'no-answer' ? (
                                                 <Typography variant="body2" sx={{ mb: 1.5, color: '#ef4444' }}>
                                                     Customer did not pick the call. Next call in {formatSeconds(cooldownSeconds)}.
+                                                </Typography>
+                                            ) : lastCallStatus === 'sdr-cut' ? (
+                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#ef4444' }}>
+                                                    SDR cut the call. Next call in {formatSeconds(cooldownSeconds)}.
                                                 </Typography>
                                             ) : (
                                                 <Typography variant="body2" sx={{ mb: 1.5, color: '#f59e0b' }}>
@@ -588,11 +604,11 @@ export default function DialPage() {
                             <TextField
                                 fullWidth
                                 select
-                                label="Agent"
+                                label="SDR"
                                 value={agentId}
                                 onChange={(event) => setAgentId(event.target.value)}
                                 sx={{ mb: 2 }}
-                                helperText={loadingAgents ? 'Loading agents...' : `${agents.length} agents`}
+                                helperText={loadingAgents ? 'Loading SDRs...' : `${agents.length} SDRs`}
                             >
                                 {agents.map((agent) => (
                                     <MenuItem key={agent.id} value={String(agent.id)}>
@@ -602,7 +618,7 @@ export default function DialPage() {
                             </TextField>
                             <TextField
                                 fullWidth
-                                label="Agent Phone"
+                                label="SDR Phone"
                                 value={agentPhone}
                                 onChange={(event) => setAgentPhone(event.target.value)}
                                 placeholder="+91XXXXXXXXXX"
@@ -628,7 +644,7 @@ export default function DialPage() {
                                 <Box sx={{ display: 'grid', gap: 1 }}>
                                     <Chip
                                         size="small"
-                                        label={lastCall.status}
+                                        label={formatCallStatus(lastCall.status)}
                                         sx={{ width: 'fit-content', bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }}
                                     />
                                     <Typography variant="body2">

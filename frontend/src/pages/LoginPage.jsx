@@ -155,7 +155,7 @@ export default function LoginPage() {
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                         {[
                             { label: 'Admin Demo', username: 'admin', password: 'admin123' },
-                            { label: 'Agent Demo', username: 'agent1', password: 'agent123' },
+                            { label: 'SDR Demo', username: 'agent1', password: 'agent123' },
                         ].map(({ label, username, password }) => (
                             <Button
                                 key={label}

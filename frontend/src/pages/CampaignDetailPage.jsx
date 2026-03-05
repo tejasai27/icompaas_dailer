@@ -3,17 +3,14 @@ import {
     Box, Card, CardContent, Typography, Grid, Chip, Button,
     LinearProgress, Tab, Tabs, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Tooltip,
-    Dialog, DialogTitle, DialogContent, DialogActions, TextField,
-    Select, MenuItem, FormControl, InputLabel, CircularProgress,
+    Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress,
     Alert
 } from '@mui/material';
 import {
-    ArrowBack, PlayArrow, Pause, Stop, BarChart, Phone,
-    Person, CheckCircle, Cancel, Timer, History, Mic,
-    Edit, Refresh, Download, Dialpad, Delete, RestartAlt
+    ArrowBack, PlayArrow, Pause, Refresh, Download, Dialpad, Delete, RestartAlt
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
-import { PieChart, Pie, Cell, BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 
@@ -21,7 +18,7 @@ const STATUS_COLORS = {
     active: '#10b981', paused: '#f59e0b', completed: '#0142a2', draft: '#64748b',
 };
 const CALL_STATUS_COLORS = {
-    answered: '#10b981', 'no-answer': '#f59e0b', busy: '#ef4444', failed: '#ef4444', completed: '#0142a2', initiated: '#3b82f6',
+    answered: '#10b981', 'sdr-cut': '#ef4444', 'no-answer': '#f59e0b', busy: '#ef4444', failed: '#ef4444', completed: '#0142a2', initiated: '#3b82f6',
 };
 
 function StatBadge({ label, value, color }) {
@@ -40,7 +37,6 @@ export default function CampaignDetailPage() {
     const [analytics, setAnalytics] = useState(null);
     const [contacts, setContacts] = useState([]);
     const [callLogs, setCallLogs] = useState([]);
-    const [timeline, setTimeline] = useState([]);
     const [tab, setTab] = useState(0);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
@@ -48,7 +44,6 @@ export default function CampaignDetailPage() {
     const [deletingContactId, setDeletingContactId] = useState(null);
     const [cooldownSeconds, setCooldownSeconds] = useState(0);
     const [campaignLoadError, setCampaignLoadError] = useState('');
-    const [clearingTimeline, setClearingTimeline] = useState(false);
     const [syncingLogs, setSyncingLogs] = useState(false);
 
     const fetchData = async ({ silent = false } = {}) => {
@@ -60,11 +55,10 @@ export default function CampaignDetailPage() {
             setCampaign(campRes.data);
             setCampaignLoadError('');
 
-            const [analyticsRes, contactsRes, logsRes, timelineRes] = await Promise.allSettled([
+            const [analyticsRes, contactsRes, logsRes] = await Promise.allSettled([
                 api.get(`/campaigns/${id}/analytics/`),
                 api.get(`/contacts/?campaign=${id}`),
                 api.get(`/call-logs/?campaign=${id}`),
-                api.get(`/campaigns/${id}/timeline/?limit=250`),
             ]);
 
             if (analyticsRes.status === 'fulfilled') {
@@ -85,11 +79,6 @@ export default function CampaignDetailPage() {
                 setCallLogs([]);
             }
 
-            if (timelineRes.status === 'fulfilled') {
-                setTimeline(timelineRes.value.data.results || []);
-            } else {
-                setTimeline([]);
-            }
         } catch (e) {
             const status = e?.response?.status;
             if (status === 404) {
@@ -201,24 +190,6 @@ export default function CampaignDetailPage() {
         }
     };
 
-    const handleClearTimeline = async () => {
-        const ok = window.confirm('Clear all timeline events for this campaign?');
-        if (!ok) return;
-
-        setClearingTimeline(true);
-        try {
-            const { data } = await api.post(`/campaigns/${id}/timeline/clear/`);
-            const clearedCount = Number(data?.cleared || 0);
-            toast.success(`Cleared ${clearedCount} timeline event${clearedCount === 1 ? '' : 's'}`);
-            setTimeline([]);
-            fetchData({ silent: true });
-        } catch (e) {
-            toast.error(e?.response?.data?.error || 'Failed to clear timeline');
-        } finally {
-            setClearingTimeline(false);
-        }
-    };
-
     const handleSyncExotelLogs = async () => {
         setSyncingLogs(true);
         try {
@@ -250,10 +221,23 @@ export default function CampaignDetailPage() {
         const seconds = value % 60;
         return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     };
+
+    const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
+    const formatCallStatus = (status) => {
+        const normalized = normalizeCallStatus(status);
+        if (!normalized) return '-';
+        if (normalized === 'sdr-cut') return 'SDR Cut the Call';
+        return normalized
+            .split('-')
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(' ');
+    };
+
     const activeCall = campaign?.active_call || null;
     const waitingForPickup = activeCall?.stage === 'waiting_for_pickup';
     const pickupLeftSeconds = Number(activeCall?.pickup_seconds_left || 0);
-    const lastCallStatus = String(campaign?.last_call_result?.display_status || '').toLowerCase();
+    const lastCallStatus = normalizeCallStatus(campaign?.last_call_result?.display_status);
 
     if (loading) return (
         <Box sx={{ p: 4, textAlign: 'center' }}>
@@ -290,7 +274,7 @@ export default function CampaignDetailPage() {
                         />
                     </Box>
                     <Typography color="text.secondary" variant="body2">
-                        {campaign.description || 'No description'} · Agent: {campaign.assigned_agent_details?.full_name || 'Unassigned'}
+                        {campaign.description || 'No description'} · SDR: {campaign.assigned_agent_details?.full_name || 'Unassigned'}
                     </Typography>
                 </Box>
 
@@ -369,10 +353,12 @@ export default function CampaignDetailPage() {
                         {campaign.active_call_in_progress
                             ? waitingForPickup
                                 ? `Customer not picking yet. Waiting ${formatSeconds(pickupLeftSeconds)} before marking no-answer.`
-                                : `Agent is in call${activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.`
+                                : `SDR is in call${activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.`
                             : cooldownSeconds > 0
                                 ? (lastCallStatus === 'no-answer'
                                     ? `Customer did not pick the call. Next call in ${formatSeconds(cooldownSeconds)}`
+                                    : lastCallStatus === 'sdr-cut'
+                                        ? `SDR cut the call. Next call in ${formatSeconds(cooldownSeconds)}`
                                     : `Next call in ${formatSeconds(cooldownSeconds)}`)
                                 : 'Waiting to dispatch next contact...'}
                     </Typography>
@@ -415,7 +401,6 @@ export default function CampaignDetailPage() {
                     <Tab label={`Contacts (${contacts.length})`} />
                     <Tab label={`Call Logs (${callLogs.length})`} />
                     <Tab label="Analytics" />
-                    <Tab label={`Timeline (${timeline.length})`} />
                 </Tabs>
 
                 {/* Contacts tab */}
@@ -435,7 +420,9 @@ export default function CampaignDetailPage() {
                                 </TableRow>
                             </TableHead>
                             <TableBody>
-                                {contacts.map((c, i) => (
+                                {contacts.map((c, i) => {
+                                    const statusKey = normalizeCallStatus(c.status);
+                                    return (
                                     <TableRow key={c.id} hover>
                                         <TableCell sx={{ color: '#64748b', fontSize: '0.8rem' }}>{i + 1}</TableCell>
                                         <TableCell>
@@ -445,11 +432,11 @@ export default function CampaignDetailPage() {
                                         <TableCell><Typography fontSize="0.875rem" color="text.secondary">{c.company || '—'}</Typography></TableCell>
                                         <TableCell>
                                             <Chip
-                                                label={c.status}
+                                                label={formatCallStatus(c.status)}
                                                 size="small"
                                                 sx={{
-                                                    bgcolor: `${CALL_STATUS_COLORS[c.status] || '#64748b'}20`,
-                                                    color: CALL_STATUS_COLORS[c.status] || '#94a3b8',
+                                                    bgcolor: `${CALL_STATUS_COLORS[statusKey] || '#64748b'}20`,
+                                                    color: CALL_STATUS_COLORS[statusKey] || '#94a3b8',
                                                 }}
                                             />
                                         </TableCell>
@@ -474,7 +461,7 @@ export default function CampaignDetailPage() {
                                             </Tooltip>
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                )})}
                             </TableBody>
                         </Table>
                     </TableContainer>
@@ -499,7 +486,7 @@ export default function CampaignDetailPage() {
                                 <TableHead>
                                     <TableRow>
                                         <TableCell>Contact</TableCell>
-                                        <TableCell>Agent</TableCell>
+                                        <TableCell>SDR</TableCell>
                                         <TableCell>Status</TableCell>
                                         <TableCell>Duration</TableCell>
                                         <TableCell>Recording</TableCell>
@@ -514,7 +501,9 @@ export default function CampaignDetailPage() {
                                                 No calls yet. Start the campaign to begin dialing.
                                             </TableCell>
                                         </TableRow>
-                                    ) : callLogs.map(log => (
+                                    ) : callLogs.map(log => {
+                                        const statusKey = normalizeCallStatus(log.status);
+                                        return (
                                         <TableRow key={log.id} hover
                                             onClick={() => setSelectedCall(log)}
                                             sx={{ cursor: 'pointer' }}>
@@ -526,8 +515,8 @@ export default function CampaignDetailPage() {
                                             </TableCell>
                                             <TableCell><Typography fontSize="0.875rem">{log.agent_name}</Typography></TableCell>
                                             <TableCell>
-                                                <Chip label={log.status} size="small"
-                                                    sx={{ bgcolor: `${CALL_STATUS_COLORS[log.status] || '#64748b'}20`, color: CALL_STATUS_COLORS[log.status] || '#94a3b8' }} />
+                                                <Chip label={formatCallStatus(log.status)} size="small"
+                                                    sx={{ bgcolor: `${CALL_STATUS_COLORS[statusKey] || '#64748b'}20`, color: CALL_STATUS_COLORS[statusKey] || '#94a3b8' }} />
                                             </TableCell>
                                             <TableCell><Typography fontSize="0.875rem">{log.duration_formatted}</Typography></TableCell>
                                             <TableCell>
@@ -551,7 +540,7 @@ export default function CampaignDetailPage() {
                                                 </Typography>
                                             </TableCell>
                                         </TableRow>
-                                    ))}
+                                    )})}
                                 </TableBody>
                             </Table>
                         </TableContainer>
@@ -610,60 +599,6 @@ export default function CampaignDetailPage() {
                     </CardContent>
                 )}
 
-                {tab === 3 && (
-                    <CardContent>
-                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
-                            <Button
-                                variant="outlined"
-                                color="error"
-                                startIcon={clearingTimeline ? <CircularProgress size={14} color="inherit" /> : <Delete />}
-                                onClick={handleClearTimeline}
-                                disabled={clearingTimeline || timeline.length === 0}
-                                sx={{ borderColor: 'rgba(239,68,68,0.45)', color: '#f87171' }}
-                            >
-                                Clear Timeline
-                            </Button>
-                        </Box>
-                        {timeline.length === 0 ? (
-                            <Typography color="text.secondary">No timeline events yet.</Typography>
-                        ) : (
-                            <Box sx={{ display: 'grid', gap: 1 }}>
-                                {timeline.map((event, index) => (
-                                    <Box
-                                        key={`${event.at}-${event.type}-${index}`}
-                                        sx={{
-                                            p: 1.5,
-                                            borderRadius: 1.5,
-                                            bgcolor: 'rgba(1,66,162,0.08)',
-                                            border: '1px solid rgba(1,66,162,0.12)',
-                                        }}
-                                    >
-                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-                                            <Typography fontWeight={600} fontSize="0.85rem">
-                                                {event.type}
-                                            </Typography>
-                                            <Typography color="text.secondary" fontSize="0.75rem">
-                                                {event.at ? new Date(event.at).toLocaleString() : '-'}
-                                            </Typography>
-                                        </Box>
-                                        <Typography fontSize="0.8rem" sx={{ mt: 0.25 }}>
-                                            {event.message || '-'}
-                                        </Typography>
-                                        {event.details && Object.keys(event.details).length > 0 ? (
-                                            <Typography
-                                                fontSize="0.72rem"
-                                                color="text.secondary"
-                                                sx={{ mt: 0.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                                            >
-                                                {JSON.stringify(event.details, null, 2)}
-                                            </Typography>
-                                        ) : null}
-                                    </Box>
-                                ))}
-                            </Box>
-                        )}
-                    </CardContent>
-                )}
             </Card>
 
             {/* Call detail dialog */}
@@ -672,13 +607,13 @@ export default function CampaignDetailPage() {
                     PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}>
                     <DialogTitle>
                         Call with {selectedCall.contact_name}
-                        <Chip label={selectedCall.status} size="small" sx={{ ml: 2 }} />
+                        <Chip label={formatCallStatus(selectedCall.status)} size="small" sx={{ ml: 2 }} />
                     </DialogTitle>
                     <DialogContent>
                         <Grid container spacing={2} sx={{ mb: 2 }}>
                             {[
                                 { label: 'Phone', value: selectedCall.contact_phone },
-                                { label: 'Agent', value: selectedCall.agent_name },
+                                { label: 'SDR', value: selectedCall.agent_name },
                                 { label: 'Duration', value: selectedCall.duration_formatted },
                                 { label: 'Time', value: new Date(selectedCall.initiated_at).toLocaleString() },
                             ].map(({ label, value }) => (
@@ -702,7 +637,7 @@ export default function CampaignDetailPage() {
 
                         {selectedCall.agent_notes && (
                             <Box sx={{ mt: 2 }}>
-                                <Typography variant="subtitle2" fontWeight={600} mb={1}>📋 Agent Notes</Typography>
+                                <Typography variant="subtitle2" fontWeight={600} mb={1}>📋 SDR Notes</Typography>
                                 <Typography variant="body2" color="text.secondary">{selectedCall.agent_notes}</Typography>
                             </Box>
                         )}

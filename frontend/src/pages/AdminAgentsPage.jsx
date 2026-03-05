@@ -50,9 +50,9 @@ export default function AdminAgentsPage() {
       });
 
       setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, status } : agent)));
-      setMessage(`Agent ${agentId} set to ${status}.`);
+      setMessage(`SDR ${agentId} set to ${status}.`);
     } catch (requestError) {
-      setError(`Agent ${agentId}: ${requestError.message}`);
+      setError(`SDR ${agentId}: ${requestError.message}`);
     }
   }
 
@@ -60,9 +60,9 @@ export default function AdminAgentsPage() {
     <div className="view-grid page page--agents">
       <section className="panel panel--hero panel--teal panel--agents-hero">
         <header className="panel-head">
-          <h2>Agent Control Board</h2>
+          <h2>SDR Control Board</h2>
           <div className="action-row">
-            <span className="muted">Live from AgentProfile</span>
+            <span className="muted">Live from SDR profile</span>
             <button className="btn btn-secondary" type="button" onClick={loadAgents}>
               Refresh
             </button>
@@ -71,7 +71,7 @@ export default function AdminAgentsPage() {
 
         <div className="kpi-strip kpi-strip--four">
           <article className="metric-pill">
-            <span>Total Agents</span>
+            <span>Total SDRs</span>
             <strong>{stats.total}</strong>
           </article>
           <article className="metric-pill">
@@ -88,14 +88,14 @@ export default function AdminAgentsPage() {
           </article>
         </div>
 
-        {agentsState === "loading" ? <p className="notice">Loading agents...</p> : null}
+        {agentsState === "loading" ? <p className="notice">Loading SDRs...</p> : null}
         {message ? <p className="notice">{message}</p> : null}
         {error ? <p className="notice notice--error">{error}</p> : null}
       </section>
 
       <section className="panel panel--cobalt panel--agents-roster">
         <header className="panel-head">
-          <h3>Agent Roster</h3>
+          <h3>SDR Roster</h3>
           <span className={`badge badge--${agentsState === "error" ? "error" : "success"}`}>{agentsState}</span>
         </header>
 
@@ -104,7 +104,7 @@ export default function AdminAgentsPage() {
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Agent</th>
+                <th>SDR</th>
                 <th>Current Status</th>
                 <th>Update Status</th>
               </tr>
@@ -112,7 +112,7 @@ export default function AdminAgentsPage() {
             <tbody>
               {agents.length === 0 ? (
                 <tr>
-                  <td colSpan={4}>No AgentProfile rows found.</td>
+                  <td colSpan={4}>No SDR rows found.</td>
                 </tr>
               ) : (
                 agents.map((agent) => (

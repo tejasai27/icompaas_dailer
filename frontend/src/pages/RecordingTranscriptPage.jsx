@@ -8,6 +8,7 @@ import {
     Chip,
     CircularProgress,
     Divider,
+    LinearProgress,
     Typography,
 } from '@mui/material';
 import { ArrowBack, GraphicEq, Mic } from '@mui/icons-material';
@@ -23,6 +24,21 @@ function formatTime(seconds) {
     return `${String(minutes).padStart(2, '0')}:${String(Math.floor(rem)).padStart(2, '0')}`;
 }
 
+function formatTranscriptStage(stage) {
+    const value = String(stage || '').trim().toLowerCase().replace(/_/g, ' ');
+    if (!value) return '';
+    if (value === 'queued') return 'Queued';
+    if (value === 'preparing audio') return 'Preparing audio';
+    if (value === 'downloading audio') return 'Downloading audio';
+    if (value === 'uploading audio') return 'Uploading audio';
+    if (value === 'transcribing') return 'Transcribing';
+    if (value === 'saving') return 'Saving transcript';
+    if (value === 'finalizing') return 'Finalizing';
+    if (value === 'completed') return 'Completed';
+    if (value === 'failed') return 'Failed';
+    return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 export default function RecordingTranscriptPage() {
     const navigate = useNavigate();
     const { recordingPublicId } = useParams();
@@ -30,6 +46,7 @@ export default function RecordingTranscriptPage() {
 
     const [loading, setLoading] = useState(true);
     const [transcribing, setTranscribing] = useState(false);
+    const [trackUntilComplete, setTrackUntilComplete] = useState(false);
     const [recording, setRecording] = useState(null);
     const [currentTime, setCurrentTime] = useState(0);
     const [currentSegmentIndex, setCurrentSegmentIndex] = useState(-1);
@@ -40,23 +57,53 @@ export default function RecordingTranscriptPage() {
     }, [recording?.transcript_segments]);
 
     const hasTranscript = Boolean((recording?.transcript_text || '').trim());
+    const transcriptStatus = String(recording?.transcript_status || '').toLowerCase();
+    const transcriptProgressPercent = Math.max(
+        0,
+        Math.min(100, Number(recording?.transcript_progress_percent ?? (transcriptStatus === 'completed' ? 100 : 0))),
+    );
+    const transcriptProgressStage = formatTranscriptStage(recording?.transcript_progress_stage || transcriptStatus);
 
-    const loadRecording = async () => {
+    const loadRecording = async ({ silent = false } = {}) => {
         if (!recordingPublicId) return;
-        setLoading(true);
+        if (!silent) {
+            setLoading(true);
+        }
         try {
             const { data } = await api.get(`/recordings/${recordingPublicId}/`);
             setRecording(data?.recording || null);
         } catch (error) {
-            toast.error(error?.response?.data?.error || 'Failed to load recording');
+            if (!silent) {
+                toast.error(error?.response?.data?.error || 'Failed to load recording');
+            }
         } finally {
-            setLoading(false);
+            if (!silent) {
+                setLoading(false);
+            }
         }
     };
 
     useEffect(() => {
         loadRecording();
     }, [recordingPublicId]);
+
+    useEffect(() => {
+        if (!recordingPublicId) return undefined;
+        if (String(recording?.transcript_status || '').toLowerCase() !== 'processing') return undefined;
+        const interval = setInterval(() => {
+            loadRecording({ silent: true });
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [recordingPublicId, recording?.transcript_status]);
+
+    useEffect(() => {
+        if (!transcribing || !trackUntilComplete) return;
+        const status = String(recording?.transcript_status || '').toLowerCase();
+        if (status && status !== 'processing') {
+            setTranscribing(false);
+            setTrackUntilComplete(false);
+        }
+    }, [recording?.transcript_status, transcribing, trackUntilComplete]);
 
     useEffect(() => {
         if (!segments.length) {
@@ -74,14 +121,24 @@ export default function RecordingTranscriptPage() {
     const runTranscription = async () => {
         if (!recordingPublicId) return;
         setTranscribing(true);
+        setTrackUntilComplete(false);
         try {
-            const { data } = await api.post(`/recordings/${recordingPublicId}/transcribe/`);
-            setRecording(data?.recording || null);
-            toast.success('Transcription completed');
+            const { data } = await api.post(`/recordings/${recordingPublicId}/transcribe/`, { language: 'auto' });
+            const nextRecording = data?.recording || null;
+            setRecording(nextRecording);
+            const nextStatus = String(nextRecording?.transcript_status || '').toLowerCase();
+            if (data?.queued || nextStatus === 'processing') {
+                toast.success('Transcription started');
+                setTrackUntilComplete(true);
+            } else {
+                toast.success('Transcription completed');
+                setTranscribing(false);
+                setTrackUntilComplete(false);
+            }
         } catch (error) {
             toast.error(error?.response?.data?.error || 'Transcription failed');
-        } finally {
             setTranscribing(false);
+            setTrackUntilComplete(false);
         }
     };
 
@@ -136,14 +193,44 @@ export default function RecordingTranscriptPage() {
                             {recording.transcript_error}
                         </Alert>
                     ) : null}
+                    {transcriptStatus === 'processing' ? (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                            Large recordings can take a few minutes. This page refreshes transcript status automatically.
+                        </Alert>
+                    ) : null}
+                    {(transcriptStatus === 'processing' || transcriptStatus === 'completed' || transcriptStatus === 'failed') ? (
+                        <Box sx={{ mb: 2 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
+                                <Typography variant="caption" color="text.secondary">
+                                    Transcription Progress
+                                </Typography>
+                                <Typography variant="caption" fontWeight={700}>
+                                    {transcriptProgressPercent}%
+                                </Typography>
+                            </Box>
+                            <LinearProgress
+                                variant="determinate"
+                                value={transcriptProgressPercent}
+                                color={transcriptStatus === 'failed' ? 'error' : transcriptStatus === 'completed' ? 'success' : 'primary'}
+                                sx={{ height: 8, borderRadius: 10 }}
+                            />
+                            {transcriptProgressStage ? (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                                    {transcriptProgressStage}
+                                </Typography>
+                            ) : null}
+                        </Box>
+                    ) : null}
                     <Button
                         variant="contained"
                         startIcon={transcribing ? <CircularProgress size={16} color="inherit" /> : <Mic />}
                         onClick={runTranscription}
                         disabled={transcribing}
+                        sx={{ mr: 1, mb: { xs: 1, sm: 0 } }}
                     >
                         {transcribing ? 'Transcribing...' : 'Generate Transcript'}
                     </Button>
+                    <Chip size="small" label="English Only" sx={{ mt: { xs: 0.25, sm: 0 } }} />
                 </CardContent>
             </Card>
 

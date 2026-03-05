@@ -41,8 +41,10 @@ export default function IntegrationsPage() {
     });
     const [settingsWarning, setSettingsWarning] = useState('');
 
-    const runConnectionCheck = async ({ silent = false } = {}) => {
-        const hasToken = Boolean(settingsMeta.access_token_configured);
+    const runConnectionCheck = async ({ silent = false, hasTokenOverride } = {}) => {
+        const hasToken = typeof hasTokenOverride === 'boolean'
+            ? hasTokenOverride
+            : Boolean(settingsMeta.access_token_configured);
 
         if (!hasToken) {
             setConnectionStatus({
@@ -110,7 +112,7 @@ export default function IntegrationsPage() {
                 updated_at: settings.updated_at || '',
             });
             if (settings.access_token_configured) {
-                void runConnectionCheck({ silent: true });
+                void runConnectionCheck({ silent: true, hasTokenOverride: Boolean(settings.access_token_configured) });
             } else {
                 setConnectionStatus({
                     state: 'disconnected',
@@ -155,7 +157,7 @@ export default function IntegrationsPage() {
             });
             toast.success('HubSpot settings saved');
             if (settings.access_token_configured) {
-                await runConnectionCheck({ silent: true });
+                await runConnectionCheck({ silent: true, hasTokenOverride: Boolean(settings.access_token_configured) });
             } else {
                 setConnectionStatus({
                     state: 'disconnected',

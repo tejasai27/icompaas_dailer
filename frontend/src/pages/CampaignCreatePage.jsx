@@ -78,7 +78,7 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
         <Box>
             <Typography variant="h6" fontWeight={600} mb={1}>Campaign Details</Typography>
             <Typography color="text.secondary" variant="body2" mb={3}>
-                Agent and agent phone are required to run queue calls.
+                SDR and SDR phone are required to run queue calls.
             </Typography>
             <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
@@ -125,7 +125,7 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                 <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth
-                        label="Agent Phone *"
+                        label="SDR Phone *"
                         value={details.agent_phone}
                         onChange={(e) => onChange({ ...details, agent_phone: e.target.value })}
                         placeholder="+91XXXXXXXXXX"
@@ -142,7 +142,7 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                     />
                 </Grid>
                 <Grid item xs={12}>
-                    <Typography variant="subtitle2" mb={1}>Assigned Agent *</Typography>
+                    <Typography variant="subtitle2" mb={1}>Assigned SDR *</Typography>
                     {loadingAgents ? (
                         <CircularProgress size={20} />
                     ) : (
@@ -151,7 +151,7 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                             value={details.agent_id}
                             onChange={(e) => onChange({ ...details, agent_id: e.target.value })}
                         >
-                            <MenuItem value=""><em>Select agent…</em></MenuItem>
+                            <MenuItem value=""><em>Select SDR…</em></MenuItem>
                             {agents.map((agent) => (
                                 <MenuItem key={agent.id} value={agent.id}>
                                     {agent.display_name} ({agent.status})
@@ -262,7 +262,7 @@ function ReviewStep({ dialingMode, details, inputMode, csvFile, manualLeadsText,
                             <Typography variant="h6" fontWeight={700}>{details.name || '-'}</Typography>
                             <Typography variant="body2" color="text.secondary">Mode: {dialingMode}</Typography>
                             <Typography variant="body2" color="text.secondary">
-                                Agent: {details.agent_id || '-'} · Phone: {details.agent_phone || '-'}
+                                SDR: {details.agent_id || '-'} · Phone: {details.agent_phone || '-'}
                             </Typography>
                             {createdCampaign?.id ? (
                                 <Typography variant="body2" color="text.secondary">Campaign ID: {createdCampaign.id}</Typography>
@@ -326,7 +326,7 @@ export default function CampaignCreatePage() {
                 const list = Array.isArray(res.data?.agents) ? res.data.agents : [];
                 setAgents(list);
             })
-            .catch(() => toast.error('Unable to fetch agents'))
+            .catch(() => toast.error('Unable to fetch SDRs'))
             .finally(() => mounted && setLoadingAgents(false));
         return () => { mounted = false; };
     }, []);
@@ -348,7 +348,7 @@ export default function CampaignCreatePage() {
             return;
         }
         if (!details.agent_id || !details.agent_phone.trim()) {
-            toast.error('Assigned agent and agent phone are required');
+            toast.error('Assigned SDR and SDR phone are required');
             return;
         }
 

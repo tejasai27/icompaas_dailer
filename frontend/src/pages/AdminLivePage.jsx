@@ -56,7 +56,7 @@ export default function AdminLivePage() {
 
       <section className="panel panel--sand panel--live-board">
         <header className="panel-head">
-          <h3>Agent State Board</h3>
+          <h3>SDR State Board</h3>
           <span className="muted">Routing readiness</span>
         </header>
 
@@ -64,7 +64,7 @@ export default function AdminLivePage() {
           <table className="table">
             <thead>
               <tr>
-                <th>Agent</th>
+                <th>SDR</th>
                 <th>Status</th>
                 <th>Queue Slot</th>
               </tr>

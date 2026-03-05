@@ -8,9 +8,9 @@ import {
     Chip,
     FormControl,
     Grid,
-    IconButton,
     InputAdornment,
     InputLabel,
+    LinearProgress,
     MenuItem,
     Pagination,
     Select,
@@ -21,10 +21,9 @@ import {
     TableHead,
     TableRow,
     TextField,
-    Tooltip,
     Typography,
 } from '@mui/material';
-import { CloudUpload, Mic, Search, Sync } from '@mui/icons-material';
+import { CloudUpload, Search, Sync } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -38,6 +37,20 @@ function formatDate(value) {
     } catch (_error) {
         return '-';
     }
+}
+
+function recordingProgressPercent(row) {
+    const status = String(row?.transcript_status || '').toLowerCase();
+    const fallback = status === 'completed' ? 100 : 0;
+    const parsed = Number(row?.transcript_progress_percent ?? fallback);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function formatProgressStage(stage) {
+    const value = String(stage || '').trim().toLowerCase().replace(/_/g, ' ');
+    if (!value) return '';
+    return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 export default function CallRecordingsPage() {
@@ -83,6 +96,16 @@ export default function CallRecordingsPage() {
         return () => clearTimeout(timer);
     }, [page, sourceFilter, search]);
 
+    useEffect(() => {
+        if (!rows.some((row) => String(row?.transcript_status || '').toLowerCase() === 'processing')) {
+            return undefined;
+        }
+        const interval = setInterval(() => {
+            fetchRecordings({ syncExotel: false, silent: true });
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [rows]);
+
     const handleUpload = async () => {
         if (!audioFile) {
             toast.error('Select an audio file first');
@@ -95,10 +118,14 @@ export default function CallRecordingsPage() {
         }
         setUploading(true);
         try {
-            await api.post('/recordings/upload/', formData, {
+            const { data } = await api.post('/recordings/upload/', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
-            toast.success('Recording uploaded');
+            if (data?.queued === false) {
+                toast.error('Uploaded, but transcription queue failed');
+            } else {
+                toast.success('Recording uploaded and transcription started');
+            }
             setAudioFile(null);
             setUploadTitle('');
             setPage(1);
@@ -255,6 +282,23 @@ export default function CallRecordingsPage() {
                                                         : '#94a3b8',
                                             }}
                                         />
+                                        {(String(row.transcript_status || '').toLowerCase() === 'processing'
+                                            || String(row.transcript_status || '').toLowerCase() === 'completed') ? (
+                                            <Box sx={{ minWidth: 120, mt: 0.75 }}>
+                                                <LinearProgress
+                                                    variant="determinate"
+                                                    value={recordingProgressPercent(row)}
+                                                    color={String(row.transcript_status || '').toLowerCase() === 'completed' ? 'success' : 'primary'}
+                                                    sx={{ height: 6, borderRadius: 8 }}
+                                                />
+                                                <Typography fontSize="0.68rem" color="text.secondary" sx={{ mt: 0.25 }}>
+                                                    {recordingProgressPercent(row)}%
+                                                    {formatProgressStage(row.transcript_progress_stage)
+                                                        ? ` · ${formatProgressStage(row.transcript_progress_stage)}`
+                                                        : ''}
+                                                </Typography>
+                                            </Box>
+                                        ) : null}
                                     </TableCell>
                                     <TableCell>
                                         <Typography fontSize="0.8rem">{formatDate(row.created_at)}</Typography>
@@ -266,15 +310,14 @@ export default function CallRecordingsPage() {
                                             ) : (
                                                 <Typography fontSize="0.75rem" color="text.secondary">No audio</Typography>
                                             )}
-                                            <Tooltip title="Open Transcript Screen">
-                                                <IconButton
-                                                    size="small"
-                                                    color="primary"
-                                                    onClick={() => navigate(`/recordings/${row.public_id}/transcript`)}
-                                                >
-                                                    <Mic fontSize="small" />
-                                                </IconButton>
-                                            </Tooltip>
+                                            <Button
+                                                size="small"
+                                                variant="text"
+                                                onClick={() => navigate(`/recordings/${row.public_id}/transcript`)}
+                                                sx={{ textTransform: 'none', fontWeight: 700, minWidth: 0, px: 1 }}
+                                            >
+                                                Transcript
+                                            </Button>
                                         </Box>
                                     </TableCell>
                                 </TableRow>

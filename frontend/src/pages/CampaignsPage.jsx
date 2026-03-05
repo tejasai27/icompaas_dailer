@@ -128,7 +128,7 @@ function CampaignCard({ campaign, onAction, onDelete, deleting }) {
                 </Grid>
 
                 <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
-                    Agent: {campaign.assigned_agent_name || 'Unassigned'}
+                    SDR: {campaign.assigned_agent_name || 'Unassigned'}
                 </Typography>
 
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -202,7 +202,7 @@ function CampaignRow({ campaign, onAction, onDelete, deleting }) {
                             {campaign.name}
                         </Typography>
                         <Typography variant="caption" color="text.secondary" noWrap>
-                            Agent: {campaign.assigned_agent_name || 'Unassigned'}
+                            SDR: {campaign.assigned_agent_name || 'Unassigned'}
                         </Typography>
                     </Box>
 

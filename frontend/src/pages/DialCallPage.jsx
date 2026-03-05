@@ -45,6 +45,21 @@ function formatSeconds(total) {
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function normalizeCallStatus(status) {
+    return String(status || '').trim().toLowerCase().replace(/_/g, '-');
+}
+
+function formatCallStatus(status) {
+    const normalized = normalizeCallStatus(status);
+    if (!normalized) return '-';
+    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
+    return normalized
+        .split('-')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+}
+
 export default function DialCallPage() {
     const navigate = useNavigate();
     const { callPublicId } = useParams();
@@ -70,12 +85,12 @@ export default function DialCallPage() {
     const lastSavedRef = useRef({ outcome: '', notes: '', dealId: '', dealName: '' });
 
     const internalStatus = String(call?.internal_status || '').toLowerCase();
-    const displayStatus = String(call?.status || '').toLowerCase();
+    const displayStatus = normalizeCallStatus(call?.status);
     const isTerminal =
         Boolean(call?.ended_at) ||
         internalStatus === 'completed' ||
         internalStatus === 'failed' ||
-        ['failed', 'busy', 'no-answer', 'cancelled', 'completed'].includes(displayStatus);
+        ['failed', 'busy', 'no-answer', 'cancelled', 'completed', 'sdr-cut'].includes(displayStatus);
     const isConnected =
         internalStatus === 'bridged' ||
         internalStatus === 'human_detected' ||
@@ -273,7 +288,7 @@ export default function DialCallPage() {
                                 </Typography>
                                 <Chip
                                     size="small"
-                                    label={call?.status || '-'}
+                                    label={formatCallStatus(call?.status)}
                                     sx={{ mt: 1.5, bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }}
                                 />
                                 <Typography variant="h3" fontWeight={700} sx={{ mt: 2.5, mb: 2 }}>

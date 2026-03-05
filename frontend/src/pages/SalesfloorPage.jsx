@@ -8,6 +8,18 @@ import { Phone, Headphones, Circle, PlayArrow, Stop, Timer } from '@mui/icons-ma
 import api from '../services/api';
 import useAuth from '../context/useAuth';
 
+const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
+const formatCallStatus = (status) => {
+    const normalized = normalizeCallStatus(status);
+    if (!normalized) return '-';
+    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
+    return normalized
+        .split('-')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+};
+
 export default function SalesfloorPage() {
     const [campaigns, setCampaigns] = useState([]);
     const [recentCalls, setRecentCalls] = useState([]);
@@ -31,7 +43,7 @@ export default function SalesfloorPage() {
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Box>
                     <Typography variant="h4" fontWeight={700}>Salesfloor</Typography>
-                    <Typography color="text.secondary" variant="body2">Real-time agent activity and live campaigns</Typography>
+                    <Typography color="text.secondary" variant="body2">Real-time SDR activity and live campaigns</Typography>
                 </Box>
                 <FormControlLabel
                     control={<Switch checked={available} onChange={toggleAvailability} sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#10b981' } }} />}
@@ -47,7 +59,7 @@ export default function SalesfloorPage() {
             </Box>
 
             <Grid container spacing={3}>
-                {/* Agent Status */}
+                {/* SDR Status */}
                 <Grid item xs={12} md={4}>
                     <Card>
                         <CardContent>
@@ -106,7 +118,7 @@ export default function SalesfloorPage() {
                                             <Typography fontWeight={700} color="#f59e0b">{c.connect_rate}%</Typography>
                                         </Box>
                                         <Box>
-                                            <Typography variant="caption" color="text.secondary">Agent</Typography>
+                                            <Typography variant="caption" color="text.secondary">SDR</Typography>
                                             <Typography fontWeight={600} fontSize="0.9rem">{c.assigned_agent_name}</Typography>
                                         </Box>
                                     </Box>
@@ -122,10 +134,13 @@ export default function SalesfloorPage() {
                         <CardContent>
                             <Typography variant="subtitle1" fontWeight={600} mb={2}>📞 Live Call Feed</Typography>
                             <List disablePadding>
-                                {recentCalls.map(call => (
+                                {recentCalls.map(call => {
+                                    const statusKey = normalizeCallStatus(call.status);
+                                    const isConnected = statusKey === 'answered';
+                                    return (
                                     <ListItem key={call.id} divider sx={{ borderColor: 'rgba(1,66,162,0.08)' }}>
                                         <ListItemAvatar>
-                                            <Avatar sx={{ bgcolor: call.status === 'answered' ? '#10b98130' : '#0142a230', color: call.status === 'answered' ? '#10b981' : '#1a5bc4', width: 36, height: 36, fontSize: '0.8rem' }}>
+                                            <Avatar sx={{ bgcolor: isConnected ? '#10b98130' : '#0142a230', color: isConnected ? '#10b981' : '#1a5bc4', width: 36, height: 36, fontSize: '0.8rem' }}>
                                                 {call.contact_name?.[0] || '?'}
                                             </Avatar>
                                         </ListItemAvatar>
@@ -134,10 +149,10 @@ export default function SalesfloorPage() {
                                             secondary={<Typography fontSize="0.8rem" color="text.secondary">{call.contact_phone} · {call.campaign_name}</Typography>}
                                         />
                                         <Box sx={{ textAlign: 'right' }}>
-                                            <Chip label={call.status} size="small"
+                                            <Chip label={formatCallStatus(call.status)} size="small"
                                                 sx={{
-                                                    bgcolor: call.status === 'answered' ? '#10b98125' : '#64748b25',
-                                                    color: call.status === 'answered' ? '#10b981' : '#94a3b8',
+                                                    bgcolor: isConnected ? '#10b98125' : '#64748b25',
+                                                    color: isConnected ? '#10b981' : '#94a3b8',
                                                     fontSize: '0.7rem', mb: 0.5
                                                 }} />
                                             <Typography fontSize="0.75rem" color="text.secondary" display="block">
@@ -145,7 +160,7 @@ export default function SalesfloorPage() {
                                             </Typography>
                                         </Box>
                                     </ListItem>
-                                ))}
+                                )})}
                             </List>
                         </CardContent>
                     </Card>

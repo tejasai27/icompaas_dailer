@@ -8,8 +8,10 @@ import os
 import re
 import threading
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qsl, urlparse
 from uuid import UUID, uuid4
 
@@ -61,16 +63,43 @@ RUNTIME_EXOTEL_WAIT_AUDIO_CACHE_KEY = "dialer:runtime:exotel_wait_audio"
 WAIT_AUDIO_ALLOWED_EXTENSIONS = {"mp3", "wav", "ogg", "m4a"}
 WAIT_AUDIO_MAX_BYTES = int(os.getenv("EXOTEL_WAIT_AUDIO_MAX_BYTES", "5242880") or 5242880)
 RECORDING_UPLOAD_ALLOWED_EXTENSIONS = {"mp3", "wav", "ogg", "m4a"}
-RECORDING_UPLOAD_MAX_BYTES = int(os.getenv("RECORDING_UPLOAD_MAX_BYTES", "15728640") or 15728640)
+RECORDING_UPLOAD_MAX_BYTES = int(os.getenv("RECORDING_UPLOAD_MAX_BYTES", "52428800") or 52428800)
 AUTO_TRANSCRIBE_RECORDINGS = str(os.getenv("AUTO_TRANSCRIBE_RECORDINGS", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
 AUTO_TRANSCRIBE_LOCK_SECONDS = max(60, int(os.getenv("AUTO_TRANSCRIBE_LOCK_SECONDS", "900") or 900))
+AUTO_TRANSCRIBE_RETRY_FAILED_SECONDS = max(
+    30,
+    int(os.getenv("AUTO_TRANSCRIBE_RETRY_FAILED_SECONDS", "180") or 180),
+)
+AUTO_TRANSCRIBE_STALE_PROCESSING_SECONDS = max(
+    120,
+    int(os.getenv("AUTO_TRANSCRIBE_STALE_PROCESSING_SECONDS", "1200") or 1200),
+)
+AUTO_TRANSCRIBE_DOWNLOAD_RETRIES = max(0, int(os.getenv("AUTO_TRANSCRIBE_DOWNLOAD_RETRIES", "4") or 4))
+AUTO_TRANSCRIBE_DOWNLOAD_RETRY_DELAY_SECONDS = max(
+    3,
+    int(os.getenv("AUTO_TRANSCRIBE_DOWNLOAD_RETRY_DELAY_SECONDS", "15") or 15),
+)
+TRANSCRIPTION_PROGRESS_CACHE_PREFIX = "dialer:recording:transcribe_progress:"
+TRANSCRIPTION_PROGRESS_TTL_SECONDS = max(
+    300,
+    int(os.getenv("TRANSCRIPTION_PROGRESS_TTL_SECONDS", "14400") or 14400),
+)
+TRANSCRIPTION_ENGLISH_ONLY = str(os.getenv("TRANSCRIPTION_ENGLISH_ONLY", "1") or "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+TRANSCRIPTION_NON_ENGLISH_ERROR = "unable to transcript different language detected"
 TRANSCRIPTION_BACKEND = str(os.getenv("TRANSCRIPTION_BACKEND") or "local_whisper").strip().lower()
 WHISPER_MODEL_NAME = str(os.getenv("WHISPER_MODEL") or "small").strip() or "small"
 WHISPER_LANGUAGE = str(os.getenv("WHISPER_LANGUAGE") or "").strip()
 WHISPER_DEVICE = str(os.getenv("WHISPER_DEVICE") or "cpu").strip() or "cpu"
 WHISPER_COMPUTE_TYPE = str(os.getenv("WHISPER_COMPUTE_TYPE") or "int8").strip() or "int8"
-WHISPER_BEAM_SIZE = max(1, int(os.getenv("WHISPER_BEAM_SIZE", "5") or 5))
-WHISPER_VAD_FILTER = str(os.getenv("WHISPER_VAD_FILTER", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+WHISPER_BEAM_SIZE = max(1, int(os.getenv("WHISPER_BEAM_SIZE", "3") or 3))
+WHISPER_VAD_FILTER = str(os.getenv("WHISPER_VAD_FILTER", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
+WHISPER_CONDITION_ON_PREVIOUS_TEXT = str(os.getenv("WHISPER_CONDITION_ON_PREVIOUS_TEXT", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+WHISPER_TEMPERATURE = float(os.getenv("WHISPER_TEMPERATURE", "0") or 0.0)
 OPENAI_AUDIO_TRANSCRIPT_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 HUBSPOT_API_BASE = "https://api.hubapi.com"
 HUBSPOT_TIMEOUT_SECONDS = max(3.0, float(os.getenv("HUBSPOT_TIMEOUT_SECONDS", "12") or 12))
@@ -185,6 +214,145 @@ def _normalize_transcript_segments(raw_segments: object) -> list[dict]:
     return normalized
 
 
+_AUTO_TRANSCRIPTION_LANGUAGE_VALUES = {"", "auto", "any", "mixed", "multilingual", "default"}
+_TRANSCRIPTION_LANGUAGE_ALIASES = {
+    "english": "en",
+    "en-us": "en",
+    "en-gb": "en",
+    "telugu": "te",
+    "te-in": "te",
+}
+
+
+def _normalize_transcription_language(value: object) -> tuple[str | None, bool]:
+    raw_text = str(value or "").strip()
+    if not raw_text:
+        return None, True
+
+    key = raw_text.lower().replace("_", "-")
+    if key in _AUTO_TRANSCRIPTION_LANGUAGE_VALUES:
+        return None, True
+
+    key = _TRANSCRIPTION_LANGUAGE_ALIASES.get(key, key)
+    if re.fullmatch(r"[a-z]{2}", key):
+        return key, True
+
+    return None, False
+
+
+def _get_request_transcription_language(request: HttpRequest) -> tuple[str | None, str]:
+    content_type = str(request.content_type or "").lower()
+    payload = _load_json_body(request) if "json" in content_type else {}
+
+    candidates = [
+        payload.get("language"),
+        request.POST.get("language"),
+        request.GET.get("language"),
+    ]
+    for raw in candidates:
+        if raw is None:
+            continue
+        language, ok = _normalize_transcription_language(raw)
+        return language, "" if ok else str(raw).strip()
+
+    return None, ""
+
+
+def _resolved_transcription_language(language: str | None = None) -> str | None:
+    if language is not None:
+        parsed, ok = _normalize_transcription_language(language)
+        if ok:
+            return parsed
+    parsed_default, default_ok = _normalize_transcription_language(WHISPER_LANGUAGE)
+    if default_ok:
+        return parsed_default
+    return None
+
+
+def _is_english_language_code(value: object) -> bool:
+    text = str(value or "").strip().lower().replace("_", "-")
+    if not text:
+        return True
+    if text in {"en", "english", "eng", "en-us", "en-gb", "en-in", "en-au"}:
+        return True
+    return text.startswith("en-")
+
+
+def _recording_transcription_progress_cache_key(recording_id: int) -> str:
+    return f"{TRANSCRIPTION_PROGRESS_CACHE_PREFIX}{recording_id}"
+
+
+def _set_recording_transcription_progress(
+    recording: RecordingAsset,
+    percent: int | float,
+    *,
+    stage: str = "",
+    status: str | None = None,
+    detail: str = "",
+) -> None:
+    if not recording or not recording.id:
+        return
+    try:
+        normalized_percent = int(round(float(percent)))
+    except (TypeError, ValueError):
+        return
+    normalized_percent = max(0, min(100, normalized_percent))
+
+    payload = {
+        "percent": normalized_percent,
+        "stage": str(stage or "").strip(),
+        "status": str(status or recording.transcript_status or "").strip().lower(),
+        "detail": str(detail or "").strip()[:400],
+        "updated_at": timezone.now().isoformat(),
+    }
+    cache.set(
+        _recording_transcription_progress_cache_key(int(recording.id)),
+        payload,
+        timeout=TRANSCRIPTION_PROGRESS_TTL_SECONDS,
+    )
+
+
+def _get_recording_transcription_progress(recording: RecordingAsset) -> dict:
+    status = str(recording.transcript_status or "").strip().lower()
+    default_percent = 5 if status == TranscriptStatus.PROCESSING else 0
+    default_stage = "processing" if status == TranscriptStatus.PROCESSING else "idle"
+    if status == TranscriptStatus.COMPLETED:
+        default_percent = 100
+        default_stage = "completed"
+    elif status == TranscriptStatus.FAILED:
+        default_percent = 0
+        default_stage = "failed"
+
+    payload = cache.get(_recording_transcription_progress_cache_key(int(recording.id)))
+    percent = default_percent
+    stage = default_stage
+    updated_at = recording.updated_at.isoformat() if recording.updated_at else None
+
+    if isinstance(payload, dict):
+        try:
+            percent = int(payload.get("percent"))
+        except (TypeError, ValueError):
+            percent = default_percent
+        percent = max(0, min(100, percent))
+        stage = str(payload.get("stage") or stage).strip() or default_stage
+        payload_updated_at = str(payload.get("updated_at") or "").strip()
+        if payload_updated_at:
+            updated_at = payload_updated_at
+
+    if status == TranscriptStatus.COMPLETED:
+        percent = 100
+        stage = "completed"
+    elif status == TranscriptStatus.FAILED:
+        stage = "failed"
+        percent = min(percent, 99)
+
+    return {
+        "percent": percent,
+        "stage": stage,
+        "updated_at": updated_at,
+    }
+
+
 def _recording_audio_url(recording: RecordingAsset, request: HttpRequest | None = None) -> str:
     audio_url = str(recording.external_audio_url or "").strip()
     if not audio_url and recording.audio_file:
@@ -205,6 +373,7 @@ def _serialize_recording_asset(recording: RecordingAsset, request: HttpRequest |
         started_at = recording.call.started_at or recording.call.created_at
         stamp = started_at.strftime("%Y-%m-%d %H:%M") if started_at else ""
         title = f"{recording.call.lead.full_name}{f' ({stamp})' if stamp else ''}"
+    progress = _get_recording_transcription_progress(recording)
 
     result = {
         "id": recording.id,
@@ -225,6 +394,9 @@ def _serialize_recording_asset(recording: RecordingAsset, request: HttpRequest |
         "contact_name": recording.call.lead.full_name if recording.call and recording.call.lead else "",
         "contact_phone": recording.call.lead.phone_e164 if recording.call and recording.call.lead else "",
         "agent_name": recording.call.agent.display_name if recording.call and recording.call.agent else "",
+        "transcript_progress_percent": progress["percent"],
+        "transcript_progress_stage": progress["stage"],
+        "transcript_progress_updated_at": progress["updated_at"],
     }
     if include_transcript:
         result["transcript_text"] = str(recording.transcript_text or "")
@@ -423,6 +595,89 @@ def _download_audio_to_tempfile(audio_url: str) -> tuple[str | None, str | None,
     return temp_path, content_type or None, None
 
 
+def _is_retryable_audio_download_error(error_text: str) -> bool:
+    value = str(error_text or "").strip().lower()
+    if not value:
+        return False
+    retryable_tokens = (
+        "audio_download_failed_http_403",
+        "audio_download_failed_http_404",
+        "audio_download_failed_http_408",
+        "audio_download_failed_http_409",
+        "audio_download_failed_http_423",
+        "audio_download_failed_http_425",
+        "audio_download_failed_http_429",
+        "audio_download_failed_http_500",
+        "audio_download_failed_http_502",
+        "audio_download_failed_http_503",
+        "audio_download_failed_http_504",
+        "read timed out",
+        "connection reset",
+        "connection aborted",
+        "temporarily unavailable",
+    )
+    return any(token in value for token in retryable_tokens)
+
+
+def _coerce_duration_seconds_value(value: object) -> int | None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return None
+    return max(1, int(round(seconds)))
+
+
+def _extract_audio_duration_seconds_from_file(file_path: str) -> int | None:
+    path = str(file_path or "").strip()
+    if not path:
+        return None
+    try:
+        from mutagen import File as MutagenFile  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        metadata = MutagenFile(path)
+    except Exception:
+        return None
+    if metadata is None:
+        return None
+    info = getattr(metadata, "info", None)
+    if info is None:
+        return None
+    return _coerce_duration_seconds_value(getattr(info, "length", None))
+
+
+def _extract_duration_from_transcription_result(result: dict, transcript_segments: list[dict]) -> int | None:
+    if not isinstance(result, dict):
+        return None
+
+    raw_payload = result.get("raw")
+    if isinstance(raw_payload, dict):
+        direct = _coerce_duration_seconds_value(raw_payload.get("duration"))
+        if direct is not None:
+            return direct
+        meta = raw_payload.get("meta")
+        if isinstance(meta, dict):
+            meta_duration = _coerce_duration_seconds_value(meta.get("duration"))
+            if meta_duration is not None:
+                return meta_duration
+
+    max_end = 0.0
+    for item in transcript_segments:
+        if not isinstance(item, dict):
+            continue
+        try:
+            end_value = float(item.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if end_value > max_end:
+            max_end = end_value
+    return _coerce_duration_seconds_value(max_end)
+
+
 def _get_whisper_model_instance():
     global _WHISPER_MODEL_INSTANCE
     if _WHISPER_MODEL_INSTANCE is not None:
@@ -444,26 +699,43 @@ def _get_whisper_model_instance():
     return _WHISPER_MODEL_INSTANCE
 
 
-def _transcribe_audio_with_local_whisper(file_path: str) -> dict:
+def _transcribe_audio_with_local_whisper(
+    file_path: str,
+    language: str | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict:
     try:
+        language_hint = _resolved_transcription_language(language)
         model = _get_whisper_model_instance()
         segments_iter, info = model.transcribe(
             file_path,
-            language=WHISPER_LANGUAGE or None,
+            language=language_hint,
             beam_size=WHISPER_BEAM_SIZE,
             vad_filter=WHISPER_VAD_FILTER,
+            condition_on_previous_text=WHISPER_CONDITION_ON_PREVIOUS_TEXT,
+            temperature=WHISPER_TEMPERATURE,
         )
     except Exception as exc:
         return {"ok": False, "error": f"local_whisper_error: {exc}"}
 
     segments: list[dict] = []
     texts: list[str] = []
+    duration_hint = max(0.0, float(getattr(info, "duration", 0.0) or 0.0)) if info is not None else 0.0
+    last_percent = 24
+    if progress_callback:
+        progress_callback(last_percent, "transcribing")
     for segment in segments_iter:
         text = str(getattr(segment, "text", "") or "").strip()
         if not text:
             continue
         start = max(0.0, float(getattr(segment, "start", 0.0) or 0.0))
         end = max(start, float(getattr(segment, "end", start) or start))
+        if progress_callback and duration_hint > 0:
+            ratio = max(0.0, min(1.0, end / duration_hint))
+            percent = int(24 + (ratio * 70.0))
+            if percent > last_percent:
+                last_percent = percent
+                progress_callback(last_percent, "transcribing")
         segments.append(
             {
                 "start": round(start, 3),
@@ -484,23 +756,37 @@ def _transcribe_audio_with_local_whisper(file_path: str) -> dict:
             "language_probability": float(getattr(info, "language_probability", 0.0) or 0.0),
             "duration": float(getattr(info, "duration", 0.0) or 0.0),
         }
+    if progress_callback:
+        progress_callback(96, "finalizing")
 
+    detected_language = str(meta.get("language") or language_hint or "")
     return {
         "ok": True,
         "text": transcript_text,
         "segments": _normalize_transcript_segments(segments),
+        "language": detected_language,
         "raw": {"provider": "local_whisper", "meta": meta},
     }
 
 
-def _transcribe_audio_with_openai_whisper_api(file_path: str, mime_type: str | None = None) -> dict:
+def _transcribe_audio_with_openai_whisper_api(
+    file_path: str,
+    mime_type: str | None = None,
+    language: str | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict:
     api_key = str(os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         return {"ok": False, "error": "OPENAI_API_KEY not configured"}
 
     model = str(os.getenv("OPENAI_WHISPER_MODEL") or "whisper-1").strip() or "whisper-1"
-    language = str(os.getenv("OPENAI_WHISPER_LANGUAGE") or "").strip()
-    timeout_seconds = max(30, int(os.getenv("OPENAI_WHISPER_TIMEOUT_SECONDS", "600") or 600))
+    language_hint = _resolved_transcription_language(language)
+    openai_language_default = str(os.getenv("OPENAI_WHISPER_LANGUAGE") or "").strip()
+    if not language_hint and openai_language_default:
+        normalized, ok = _normalize_transcription_language(openai_language_default)
+        if ok:
+            language_hint = normalized
+    timeout_seconds = max(30, int(os.getenv("OPENAI_WHISPER_TIMEOUT_SECONDS", "1800") or 1800))
 
     content_type = mime_type or mimetypes.guess_type(file_path)[0] or "application/octet-stream"
     headers = {"Authorization": f"Bearer {api_key}"}
@@ -508,8 +794,10 @@ def _transcribe_audio_with_openai_whisper_api(file_path: str, mime_type: str | N
         ("model", model),
         ("response_format", "verbose_json"),
     ]
-    if language:
-        data.append(("language", language))
+    if language_hint:
+        data.append(("language", language_hint))
+    if progress_callback:
+        progress_callback(28, "uploading_audio")
 
     try:
         with open(file_path, "rb") as audio_file:
@@ -523,6 +811,8 @@ def _transcribe_audio_with_openai_whisper_api(file_path: str, mime_type: str | N
             )
     except (OSError, requests.RequestException) as exc:
         return {"ok": False, "error": str(exc)}
+    if progress_callback:
+        progress_callback(88, "finalizing")
 
     try:
         payload = response.json()
@@ -548,19 +838,54 @@ def _transcribe_audio_with_openai_whisper_api(file_path: str, mime_type: str | N
     if text and not segments:
         segments = [{"start": 0.0, "end": max(1.0, round(len(text) / 16.0, 3)), "text": text}]
 
+    detected_language = (
+        str(payload.get("language") or "").strip()
+        if isinstance(payload, dict)
+        else ""
+    )
     return {
         "ok": True,
         "text": text,
         "segments": segments,
+        "language": detected_language or language_hint or "",
         "raw": payload if isinstance(payload, dict) else {},
     }
 
 
-def _transcribe_audio_with_whisper(file_path: str, mime_type: str | None = None) -> dict:
+def _transcribe_audio_with_whisper(
+    file_path: str,
+    mime_type: str | None = None,
+    language: str | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict:
     backend = TRANSCRIPTION_BACKEND
     if backend in {"openai", "openai_whisper", "openai_api"}:
-        return _transcribe_audio_with_openai_whisper_api(file_path, mime_type=mime_type)
-    return _transcribe_audio_with_local_whisper(file_path)
+        openai_result = _transcribe_audio_with_openai_whisper_api(
+            file_path,
+            mime_type=mime_type,
+            language=language,
+            progress_callback=progress_callback,
+        )
+        if openai_result.get("ok"):
+            return openai_result
+        error_text = str(openai_result.get("error") or "").lower()
+        if any(token in error_text for token in {"openai_http_413", "too large", "maximum content size", "content size limit"}):
+            fallback_result = _transcribe_audio_with_local_whisper(
+                file_path,
+                language=language,
+                progress_callback=progress_callback,
+            )
+            if fallback_result.get("ok"):
+                raw_payload = fallback_result.get("raw") if isinstance(fallback_result.get("raw"), dict) else {}
+                raw_payload["fallback_from"] = "openai_whisper"
+                fallback_result["raw"] = raw_payload
+                return fallback_result
+        return openai_result
+    return _transcribe_audio_with_local_whisper(
+        file_path,
+        language=language,
+        progress_callback=progress_callback,
+    )
 
 
 def _save_call_transcript_payload(call: CallSession, transcript_status: str, text: str, segments: list[dict], error_text: str = "") -> None:
@@ -576,36 +901,101 @@ def _save_call_transcript_payload(call: CallSession, transcript_status: str, tex
     call.save(update_fields=["raw_provider_payload"])
 
 
-def _run_recording_transcription(recording: RecordingAsset) -> dict:
+def _mark_recording_transcription_failed(recording: RecordingAsset, error_text: str) -> None:
+    message = str(error_text or "transcription_failed").strip() or "transcription_failed"
+    existing_payload = cache.get(_recording_transcription_progress_cache_key(int(recording.id))) if recording and recording.id else {}
+    existing_percent = 0
+    if isinstance(existing_payload, dict):
+        try:
+            existing_percent = int(existing_payload.get("percent"))
+        except (TypeError, ValueError):
+            existing_percent = 0
+    recording.transcript_status = TranscriptStatus.FAILED
+    recording.transcript_error = message[:1000]
+    recording.save(update_fields=["transcript_status", "transcript_error", "updated_at"])
+    _set_recording_transcription_progress(
+        recording,
+        max(0, min(99, existing_percent)),
+        stage="failed",
+        status=TranscriptStatus.FAILED,
+        detail=recording.transcript_error,
+    )
+    if recording.call:
+        _save_call_transcript_payload(recording.call, TranscriptStatus.FAILED, "", [], error_text=recording.transcript_error)
+
+
+def _run_recording_transcription(recording: RecordingAsset, language: str | None = None) -> dict:
     temp_download_path = None
     audio_path = ""
     mime_type = None
+
+    def _progress(percent: int, stage: str) -> None:
+        _set_recording_transcription_progress(
+            recording,
+            percent,
+            stage=stage,
+            status=TranscriptStatus.PROCESSING,
+        )
+
     try:
+        _progress(10, "preparing_audio")
         if recording.audio_file:
             try:
                 audio_path = str(recording.audio_file.path)
             except Exception:
                 audio_path = ""
         if not audio_path:
-            audio_path, mime_type, download_error = _download_audio_to_tempfile(recording.external_audio_url)
+            max_attempts = 1
+            if recording.source == RecordingSource.EXOTEL:
+                max_attempts = 1 + AUTO_TRANSCRIBE_DOWNLOAD_RETRIES
+
+            download_error = ""
+            for attempt in range(max_attempts):
+                _progress(min(20, 10 + (attempt * 3)), "downloading_audio")
+                audio_path, mime_type, download_error = _download_audio_to_tempfile(recording.external_audio_url)
+                if audio_path and not download_error:
+                    break
+                if attempt + 1 >= max_attempts:
+                    break
+                if not _is_retryable_audio_download_error(download_error):
+                    break
+                time.sleep(AUTO_TRANSCRIBE_DOWNLOAD_RETRY_DELAY_SECONDS)
+
             if download_error or not audio_path:
                 return {"ok": False, "error": download_error or "unable_to_download_audio"}
             temp_download_path = audio_path
 
-        result = _transcribe_audio_with_whisper(audio_path, mime_type=mime_type)
+        _progress(24, "transcribing")
+        result = _transcribe_audio_with_whisper(
+            audio_path,
+            mime_type=mime_type,
+            language=language,
+            progress_callback=_progress,
+        )
         if not result.get("ok"):
             return result
 
+        detected_language = str(result.get("language") or "").strip().lower()
+        if TRANSCRIPTION_ENGLISH_ONLY and detected_language and not _is_english_language_code(detected_language):
+            return {"ok": False, "error": TRANSCRIPTION_NON_ENGLISH_ERROR}
+
         transcript_text = str(result.get("text") or "").strip()
         transcript_segments = _normalize_transcript_segments(result.get("segments"))
+        duration_seconds = recording.duration_seconds or _extract_duration_from_transcription_result(result, transcript_segments)
+        if not duration_seconds and audio_path:
+            duration_seconds = _extract_audio_duration_seconds_from_file(audio_path)
         recording.transcript_text = transcript_text
         recording.transcript_segments = transcript_segments
+        if duration_seconds:
+            recording.duration_seconds = duration_seconds
         recording.transcript_status = TranscriptStatus.COMPLETED if transcript_text else TranscriptStatus.FAILED
         recording.transcript_error = "" if transcript_text else "empty_transcript"
+        _progress(98, "saving")
         recording.save(
             update_fields=[
                 "transcript_text",
                 "transcript_segments",
+                "duration_seconds",
                 "transcript_status",
                 "transcript_error",
                 "updated_at",
@@ -620,6 +1010,14 @@ def _run_recording_transcription(recording: RecordingAsset) -> dict:
                 segments=recording.transcript_segments if isinstance(recording.transcript_segments, list) else [],
                 error_text=recording.transcript_error,
             )
+
+        _set_recording_transcription_progress(
+            recording,
+            100 if recording.transcript_status == TranscriptStatus.COMPLETED else 99,
+            stage="completed" if recording.transcript_status == TranscriptStatus.COMPLETED else "failed",
+            status=recording.transcript_status,
+            detail=recording.transcript_error,
+        )
 
         return {
             "ok": True,
@@ -642,13 +1040,33 @@ def _is_terminal_call_for_transcription(call: CallSession | None) -> bool:
     return call.status in {CallStatus.COMPLETED, CallStatus.FAILED, CallStatus.MACHINE_DETECTED}
 
 
-def _transcribe_recording_asset(recording: RecordingAsset, force: bool = False) -> dict:
+def _is_recording_transcription_processing_stale(recording: RecordingAsset) -> bool:
+    if recording.transcript_status != TranscriptStatus.PROCESSING:
+        return False
+    reference = recording.updated_at or recording.created_at
+    if not reference:
+        return True
+    return (timezone.now() - reference).total_seconds() >= AUTO_TRANSCRIBE_STALE_PROCESSING_SECONDS
+
+
+def _can_retry_failed_auto_transcription(recording: RecordingAsset, force: bool = False) -> bool:
+    if force:
+        return True
+    if recording.transcript_status != TranscriptStatus.FAILED:
+        return False
+    reference = recording.updated_at or recording.created_at
+    if not reference:
+        return True
+    return (timezone.now() - reference).total_seconds() >= AUTO_TRANSCRIBE_RETRY_FAILED_SECONDS
+
+
+def _transcribe_recording_asset(recording: RecordingAsset, force: bool = False, language: str | None = None) -> dict:
     if recording.call and recording.source == RecordingSource.EXOTEL:
         _upsert_recording_asset_from_call(recording.call)
         recording.refresh_from_db()
 
     if not force:
-        if recording.transcript_status == TranscriptStatus.PROCESSING:
+        if recording.transcript_status == TranscriptStatus.PROCESSING and not _is_recording_transcription_processing_stale(recording):
             return {"ok": True, "recording": recording, "segments_count": 0, "skipped": "already_processing"}
         if recording.transcript_status == TranscriptStatus.COMPLETED and str(recording.transcript_text or "").strip():
             return {
@@ -657,21 +1075,30 @@ def _transcribe_recording_asset(recording: RecordingAsset, force: bool = False) 
                 "segments_count": len(recording.transcript_segments) if isinstance(recording.transcript_segments, list) else 0,
                 "skipped": "already_completed",
             }
+        if recording.transcript_status == TranscriptStatus.FAILED and not _can_retry_failed_auto_transcription(recording, force=force):
+            return {"ok": True, "recording": recording, "segments_count": 0, "skipped": "recent_failed"}
 
     recording.transcript_status = TranscriptStatus.PROCESSING
     recording.transcript_error = ""
     recording.save(update_fields=["transcript_status", "transcript_error", "updated_at"])
+    _set_recording_transcription_progress(
+        recording,
+        8,
+        stage="queued",
+        status=TranscriptStatus.PROCESSING,
+    )
     if recording.call:
         _save_call_transcript_payload(recording.call, TranscriptStatus.PROCESSING, "", [], error_text="")
 
-    transcribe_result = _run_recording_transcription(recording)
+    try:
+        transcribe_result = _run_recording_transcription(recording, language=language)
+    except Exception as exc:
+        _mark_recording_transcription_failed(recording, f"transcription_runtime_error: {exc}")
+        return {"ok": False, "error": f"transcription_runtime_error: {exc}"}
+
     if not transcribe_result.get("ok"):
         error_text = str(transcribe_result.get("error") or "transcription_failed").strip()
-        recording.transcript_status = TranscriptStatus.FAILED
-        recording.transcript_error = error_text
-        recording.save(update_fields=["transcript_status", "transcript_error", "updated_at"])
-        if recording.call:
-            _save_call_transcript_payload(recording.call, TranscriptStatus.FAILED, "", [], error_text=error_text)
+        _mark_recording_transcription_failed(recording, error_text)
         return {"ok": False, "error": error_text}
 
     recording.refresh_from_db()
@@ -682,12 +1109,25 @@ def _transcribe_recording_asset(recording: RecordingAsset, force: bool = False) 
     }
 
 
-def _schedule_recording_auto_transcription(recording: RecordingAsset, reason: str = "") -> bool:
-    if not AUTO_TRANSCRIBE_RECORDINGS:
+def _schedule_recording_auto_transcription(
+    recording: RecordingAsset,
+    reason: str = "",
+    force: bool = False,
+    language: str | None = None,
+) -> bool:
+    if not AUTO_TRANSCRIBE_RECORDINGS and not force:
         return False
     if not recording or not recording.id:
         return False
-    if recording.transcript_status in {TranscriptStatus.PROCESSING, TranscriptStatus.COMPLETED, TranscriptStatus.FAILED}:
+    if (
+        recording.transcript_status == TranscriptStatus.PROCESSING
+        and not force
+        and not _is_recording_transcription_processing_stale(recording)
+    ):
+        return False
+    if not force and recording.transcript_status == TranscriptStatus.COMPLETED:
+        return False
+    if not force and recording.transcript_status == TranscriptStatus.FAILED and not _can_retry_failed_auto_transcription(recording):
         return False
     if recording.call and recording.source == RecordingSource.EXOTEL and not _is_terminal_call_for_transcription(recording.call):
         return False
@@ -710,7 +1150,24 @@ def _schedule_recording_auto_transcription(recording: RecordingAsset, reason: st
                 return
             if fresh.call and fresh.source == RecordingSource.EXOTEL and not _is_terminal_call_for_transcription(fresh.call):
                 return
-            result = _transcribe_recording_asset(fresh, force=False)
+            _set_recording_transcription_progress(
+                fresh,
+                6,
+                stage="queued",
+                status=TranscriptStatus.PROCESSING,
+            )
+            _debug_runtime(
+                "auto_transcribe_recording_start",
+                {
+                    "recording_id": fresh.id,
+                    "public_id": str(fresh.public_id),
+                    "status": str(fresh.transcript_status or ""),
+                    "reason": reason,
+                    "force": bool(force),
+                    "language": str(language or ""),
+                },
+            )
+            result = _transcribe_recording_asset(fresh, force=force, language=language)
             _debug_runtime(
                 "auto_transcribe_recording_result",
                 {
@@ -718,11 +1175,16 @@ def _schedule_recording_auto_transcription(recording: RecordingAsset, reason: st
                     "public_id": str(fresh.public_id),
                     "ok": bool(result.get("ok")),
                     "error": str(result.get("error") or ""),
+                    "language": str(language or ""),
                     "reason": reason,
+                    "force": bool(force),
                 },
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("auto transcription failed for recording_id=%s", recording_id)
+            fallback = RecordingAsset.objects.select_related("call").filter(id=recording_id).first()
+            if fallback and fallback.transcript_status == TranscriptStatus.PROCESSING:
+                _mark_recording_transcription_failed(fallback, f"auto_transcription_worker_error: {exc}")
         finally:
             current = cache.get(lock_key)
             if current == lock_token:
@@ -1202,7 +1664,6 @@ def _resolve_hubspot_deal_context(
         _lookup_value(init_request, ("deal_id", "dealId", "hubspot_deal_id", "hubspotDealId")),
         _lookup_value(init_metadata, ("deal_id", "dealId", "hubspot_deal_id", "hubspotDealId")),
         _lookup_value(lead_metadata, ("deal_id", "dealId", "hubspot_deal_id", "hubspotDealId")),
-        settings_row.default_deal_id if settings_row else "",
     ]
     deal_name_candidates = [
         explicit_deal_name,
@@ -1210,7 +1671,6 @@ def _resolve_hubspot_deal_context(
         _lookup_value(init_request, ("deal_name", "dealName", "hubspot_deal_name", "hubspotDealName")),
         _lookup_value(init_metadata, ("deal_name", "dealName", "hubspot_deal_name", "hubspotDealName")),
         _lookup_value(lead_metadata, ("deal_name", "dealName", "hubspot_deal_name", "hubspotDealName")),
-        settings_row.default_deal_name if settings_row else "",
     ]
 
     mode = str(settings_row.deal_association_mode or HubSpotDealAssociationMode.DEAL_ID) if settings_row else HubSpotDealAssociationMode.DEAL_ID
@@ -1282,6 +1742,8 @@ def _map_hubspot_call_status(display_status: str, outcome: str) -> str:
     normalized_status = str(display_status or "").strip().lower().replace("_", "-")
     normalized_outcome = str(outcome or "").strip().lower().replace("_", "-")
 
+    if normalized_status == "sdr-cut":
+        return "FAILED"
     if normalized_status in {"no-answer", "no answer"} or normalized_outcome == "no-answer":
         return "NO_ANSWER"
     if normalized_status == "busy" or normalized_outcome == "busy":
@@ -1507,6 +1969,16 @@ def _sync_call_to_hubspot(
             error=error_text,
         )
         return {"ok": False, "error": error_text}
+
+    has_deal_context = bool(_first_non_empty_text(deal_id, deal_name))
+    if not has_deal_context:
+        _save_hubspot_sync_state(
+            call,
+            sync_reason=reason,
+            status="skipped",
+            error="",
+        )
+        return {"ok": True, "skipped": "hubspot_sync_skipped_without_deal_context"}
 
     raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
     hubspot_state = raw_payload.get("hubspot_sync") if isinstance(raw_payload.get("hubspot_sync"), dict) else {}
@@ -2426,75 +2898,6 @@ def campaign_queue(request: HttpRequest, campaign_id: int) -> JsonResponse:
                 }
                 for row in rows
             ],
-        }
-    )
-
-
-@require_GET
-def campaign_timeline(request: HttpRequest, campaign_id: int) -> JsonResponse:
-    campaign = get_object_or_404(Campaign, id=campaign_id)
-    limit = max(1, min(_parse_positive_int(request.GET.get("limit"), 200), 1000))
-    events = _get_campaign_timeline(campaign, limit=limit)
-    return JsonResponse({"campaign_id": campaign.id, "count": len(events), "results": events})
-
-
-@csrf_exempt
-@require_POST
-def clear_campaign_timeline(request: HttpRequest, campaign_id: int) -> JsonResponse:
-    campaign = get_object_or_404(Campaign, id=campaign_id)
-
-    cleared = 0
-    with transaction.atomic():
-        locked_campaign = (
-            Campaign.objects.select_for_update()
-            .only("id", "metadata", "updated_at")
-            .filter(id=campaign.id)
-            .first()
-        )
-        if not locked_campaign:
-            return JsonResponse({"error": "campaign_not_found"}, status=404)
-
-        metadata = locked_campaign.metadata if isinstance(locked_campaign.metadata, dict) else {}
-        timeline = metadata.get("timeline")
-        if isinstance(timeline, list):
-            cleared = len(timeline)
-        metadata.pop("timeline", None)
-        locked_campaign.metadata = metadata
-        locked_campaign.save(update_fields=["metadata", "updated_at"])
-
-    logger.info("campaign_timeline_cleared campaign_id=%s cleared=%s", campaign.id, cleared)
-    return JsonResponse({"ok": True, "campaign_id": campaign.id, "cleared": cleared})
-
-
-@csrf_exempt
-@require_POST
-def clear_all_campaign_timelines(request: HttpRequest) -> JsonResponse:
-    campaigns = list(Campaign.objects.only("id", "metadata", "updated_at").order_by("id"))
-    cleared_campaigns = 0
-    cleared_events = 0
-
-    with transaction.atomic():
-        for campaign in campaigns:
-            metadata = campaign.metadata if isinstance(campaign.metadata, dict) else {}
-            timeline = metadata.get("timeline")
-            if not isinstance(timeline, list):
-                continue
-            cleared_events += len(timeline)
-            metadata.pop("timeline", None)
-            campaign.metadata = metadata
-            campaign.save(update_fields=["metadata", "updated_at"])
-            cleared_campaigns += 1
-
-    logger.info(
-        "campaign_timeline_cleared_all cleared_campaigns=%s cleared_events=%s",
-        cleared_campaigns,
-        cleared_events,
-    )
-    return JsonResponse(
-        {
-            "ok": True,
-            "cleared_campaigns": cleared_campaigns,
-            "cleared_events": cleared_events,
         }
     )
 
@@ -3458,14 +3861,36 @@ def upload_recording(request: HttpRequest) -> JsonResponse:
     recording = RecordingAsset(
         source=RecordingSource.UPLOAD,
         title=title[:255],
-        transcript_status=TranscriptStatus.NONE,
+        transcript_status=TranscriptStatus.PROCESSING,
+        transcript_error="",
     )
     recording.audio_file.save(f"{uuid4().hex}_{safe_name}", upload, save=False)
     recording.save()
-    _schedule_recording_auto_transcription(recording, reason="upload")
+    _set_recording_transcription_progress(
+        recording,
+        5,
+        stage="queued",
+        status=TranscriptStatus.PROCESSING,
+    )
+
+    try:
+        uploaded_audio_path = str(recording.audio_file.path)
+    except Exception:
+        uploaded_audio_path = ""
+    if uploaded_audio_path:
+        inferred_duration = _extract_audio_duration_seconds_from_file(uploaded_audio_path)
+        if inferred_duration and recording.duration_seconds != inferred_duration:
+            recording.duration_seconds = inferred_duration
+            recording.save(update_fields=["duration_seconds", "updated_at"])
+
+    scheduled = _schedule_recording_auto_transcription(recording, reason="upload", force=True)
+    if not scheduled:
+        _mark_recording_transcription_failed(recording, "transcription_queue_unavailable")
+
     return JsonResponse(
         {
             "ok": True,
+            "queued": bool(scheduled),
             "recording": _serialize_recording_asset(recording, request=request, include_transcript=True),
         },
         status=201,
@@ -3482,6 +3907,11 @@ def get_recording(request: HttpRequest, recording_public_id: UUID) -> JsonRespon
     if recording.call and recording.source == RecordingSource.EXOTEL:
         _upsert_recording_asset_from_call(recording.call)
         recording.refresh_from_db()
+
+    if recording.transcript_status == TranscriptStatus.PROCESSING and _is_recording_transcription_processing_stale(recording):
+        _mark_recording_transcription_failed(recording, "transcription_stale_timeout")
+        recording.refresh_from_db()
+
     _schedule_recording_auto_transcription(recording, reason="recording_view")
 
     return JsonResponse(
@@ -3499,24 +3929,55 @@ def transcribe_recording(request: HttpRequest, recording_public_id: UUID) -> Jso
         RecordingAsset.objects.select_related("call__lead", "call__agent"),
         public_id=recording_public_id,
     )
+    language_override, invalid_language = _get_request_transcription_language(request)
+    if invalid_language:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "invalid_transcription_language",
+                "detail": "Use auto, en, or te.",
+            },
+            status=400,
+        )
+    if TRANSCRIPTION_ENGLISH_ONLY and language_override and not _is_english_language_code(language_override):
+        return JsonResponse({"ok": False, "error": TRANSCRIPTION_NON_ENGLISH_ERROR}, status=400)
+    language_for_job = None if TRANSCRIPTION_ENGLISH_ONLY else language_override
 
     if recording.call and recording.source == RecordingSource.EXOTEL:
         _upsert_recording_asset_from_call(recording.call)
         recording.refresh_from_db()
+        if not _is_terminal_call_for_transcription(recording.call):
+            return JsonResponse({"ok": False, "error": "recording_not_ready_for_transcription"}, status=409)
 
-    transcribe_result = _transcribe_recording_asset(recording, force=True)
-    if not transcribe_result.get("ok"):
-        error_text = str(transcribe_result.get("error") or "transcription_failed").strip()
-        return JsonResponse({"ok": False, "error": error_text}, status=502)
+    if recording.transcript_status != TranscriptStatus.PROCESSING:
+        recording.transcript_status = TranscriptStatus.PROCESSING
+        recording.transcript_error = ""
+        recording.save(update_fields=["transcript_status", "transcript_error", "updated_at"])
+        _set_recording_transcription_progress(
+            recording,
+            5,
+            stage="queued",
+            status=TranscriptStatus.PROCESSING,
+        )
+        if recording.call:
+            _save_call_transcript_payload(recording.call, TranscriptStatus.PROCESSING, "", [], error_text="")
 
-    recording = transcribe_result.get("recording") or recording
+    scheduled = _schedule_recording_auto_transcription(
+        recording,
+        reason="manual",
+        force=True,
+        language=language_for_job,
+    )
     recording.refresh_from_db()
     return JsonResponse(
         {
             "ok": True,
+            "queued": bool(scheduled or recording.transcript_status == TranscriptStatus.PROCESSING),
+            "language": language_for_job or "auto",
             "recording": _serialize_recording_asset(recording, request=request, include_transcript=True),
-            "segments_count": int(transcribe_result.get("segments_count") or 0),
-        }
+            "segments_count": len(recording.transcript_segments) if isinstance(recording.transcript_segments, list) else 0,
+        },
+        status=202,
     )
 
 
@@ -3675,12 +4136,41 @@ def sync_exotel_call_logs(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_POST
 def trigger_transcription(request: HttpRequest, call_id: int) -> JsonResponse:
-    call = get_object_or_404(CallSession, id=call_id)
+    call = get_object_or_404(CallSession.objects.select_related("lead", "agent"), id=call_id)
+    if not str(call.recording_url or "").strip():
+        return JsonResponse({"ok": False, "error": "recording_not_available"}, status=400)
+
+    recording, _ = _upsert_recording_asset_from_call(call)
+    if not recording:
+        return JsonResponse({"ok": False, "error": "recording_not_available"}, status=400)
+
+    if recording.source == RecordingSource.EXOTEL and not _is_terminal_call_for_transcription(call):
+        return JsonResponse({"ok": False, "error": "recording_not_ready_for_transcription"}, status=409)
+
+    scheduled = _schedule_recording_auto_transcription(
+        recording,
+        reason="call_log_manual",
+        force=True,
+        language=None,
+    )
     raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
-    raw_payload["transcript_status"] = "processing"
+    if scheduled:
+        raw_payload["transcript_status"] = "processing"
+        raw_payload.pop("transcript_error", None)
+    else:
+        raw_payload["transcript_status"] = "failed"
+        raw_payload["transcript_error"] = "transcription_queue_unavailable"
     call.raw_provider_payload = raw_payload
     call.save(update_fields=["raw_provider_payload"])
-    return JsonResponse({"ok": True, "call_id": call.id, "transcript_status": "processing"})
+    return JsonResponse(
+        {
+            "ok": True,
+            "call_id": call.id,
+            "queued": bool(scheduled),
+            "transcript_status": "processing" if scheduled else "failed",
+            "error": "" if scheduled else "transcription_queue_unavailable",
+        }
+    )
 
 
 @csrf_exempt
@@ -3969,10 +4459,16 @@ def exotel_webhook(request: HttpRequest) -> JsonResponse:
         call.answered_at = call.answered_at or now
         update_fields.extend(["status", "answered_at"])
 
-    if any(token in normalized_event for token in ("answered", "connected", "in-progress", "inprogress")):
+    has_answered_signal = any(token in normalized_event for token in ("answered", "connected"))
+    has_in_progress_signal = any(token in normalized_event for token in ("in-progress", "inprogress"))
+
+    if has_answered_signal:
         call.status = CallStatus.BRIDGED
         call.answered_at = call.answered_at or now
         update_fields.extend(["status", "answered_at"])
+    elif has_in_progress_signal and call.status in {CallStatus.QUEUED, CallStatus.DIALING, CallStatus.RINGING}:
+        call.status = CallStatus.RINGING
+        update_fields.append("status")
 
     terminal_event_tokens = (
         "terminal",
@@ -3990,7 +4486,7 @@ def exotel_webhook(request: HttpRequest) -> JsonResponse:
     # Use explicit event/status signals only. Also ignore mixed "answered + terminal"
     # text until a clear terminal-only callback/poll confirms completion.
     has_terminal_token = any(token in event_type for token in terminal_event_tokens)
-    has_answered_token = any(token in event_type for token in ("answered", "connected", "in-progress", "inprogress"))
+    has_answered_token = any(token in event_type for token in ("answered", "connected"))
     is_terminal_event = has_terminal_token and not has_answered_token
 
     if is_terminal_event:
@@ -4226,7 +4722,7 @@ def _serialize_active_campaign_call(call: CallSession | None) -> dict | None:
     now = timezone.now()
     started_at = call.started_at or call.created_at
     wait_seconds = _get_exotel_no_answer_wait_seconds()
-    waiting_for_pickup = call.status in {CallStatus.QUEUED, CallStatus.DIALING, CallStatus.RINGING}
+    waiting_for_pickup = _is_call_waiting_for_customer_pickup(call)
     pickup_elapsed = 0
     pickup_left = 0
     if waiting_for_pickup and started_at:
@@ -4351,31 +4847,6 @@ def _get_campaign_last_call_result(campaign: Campaign) -> dict | None:
     }
 
 
-def _get_campaign_timeline(campaign: Campaign, limit: int = 200) -> list[dict]:
-    metadata = campaign.metadata if isinstance(campaign.metadata, dict) else {}
-    timeline = metadata.get("timeline")
-    if not isinstance(timeline, list):
-        return []
-
-    normalized: list[dict] = []
-    for item in timeline:
-        if not isinstance(item, dict):
-            continue
-        normalized.append(
-            {
-                "at": str(item.get("at") or ""),
-                "type": str(item.get("type") or "event"),
-                "message": str(item.get("message") or ""),
-                "details": item.get("details") if isinstance(item.get("details"), dict) else {},
-                "call_id": item.get("call_id"),
-                "lead_id": item.get("lead_id"),
-            }
-        )
-
-    normalized.sort(key=lambda row: row.get("at") or "", reverse=True)
-    return normalized[: max(1, min(int(limit or 200), 1000))]
-
-
 def _log_campaign_event(
     campaign: Campaign,
     event_type: str,
@@ -4388,44 +4859,14 @@ def _log_campaign_event(
     if not campaign or not campaign.id:
         return
 
-    event = {
-        "at": timezone.now().isoformat(),
-        "type": str(event_type or "event"),
-        "message": str(message or ""),
-        "details": details if isinstance(details, dict) else {},
-        "call_id": call.id if call else None,
-        "lead_id": lead.id if lead else None,
-    }
-
-    with transaction.atomic():
-        locked_campaign = (
-            Campaign.objects.select_for_update()
-            .only("id", "metadata", "updated_at")
-            .filter(id=campaign.id)
-            .first()
-        )
-        if not locked_campaign:
-            return
-
-        metadata = locked_campaign.metadata if isinstance(locked_campaign.metadata, dict) else {}
-        timeline = metadata.get("timeline")
-        if not isinstance(timeline, list):
-            timeline = []
-        timeline.append(event)
-        metadata["timeline"] = timeline[-500:]
-        locked_campaign.metadata = metadata
-        locked_campaign.save(update_fields=["metadata", "updated_at"])
-
-    campaign.metadata = metadata
-
     logger.info(
-        "campaign_timeline campaign_id=%s type=%s message=%s details=%s call_id=%s lead_id=%s",
+        "campaign_event campaign_id=%s type=%s message=%s details=%s call_id=%s lead_id=%s",
         campaign.id,
-        event["type"],
-        event["message"],
-        json.dumps(event["details"], default=str),
-        event["call_id"],
-        event["lead_id"],
+        str(event_type or "event"),
+        str(message or ""),
+        json.dumps(details if isinstance(details, dict) else {}, default=str),
+        call.id if call else None,
+        lead.id if lead else None,
     )
 
 
@@ -4476,7 +4917,7 @@ def _sync_campaign_open_calls(campaign: Campaign, limit: int = 20) -> dict:
         # after timeout, mark as no-answer and move to next lead after campaign delay.
         if (
             not call.ended_at
-            and call.status in {CallStatus.QUEUED, CallStatus.DIALING, CallStatus.RINGING}
+            and _is_call_waiting_for_customer_pickup(call)
         ):
             started_at = call.started_at or call.created_at
             wait_seconds = _get_exotel_no_answer_wait_seconds()
@@ -5067,8 +5508,8 @@ def _handle_campaign_call_terminal(call: CallSession, auto_dispatch: bool = Fals
             campaign_lead.completed_at = now
             campaign_lead.next_attempt_at = None
         else:
-            if display_status == "no-answer":
-                # Product requirement: after 60s no-pick, move to next contact (do not retry same lead).
+            if display_status in {"no-answer", "sdr-cut"}:
+                # Product requirement: negative terminal outcomes should move to next contact (no retry).
                 campaign_lead.status = CampaignLeadStatus.FAILED
                 campaign_lead.completed_at = now
                 campaign_lead.next_attempt_at = None
@@ -5301,11 +5742,71 @@ def _has_provider_end_confirmation(call: CallSession, raw_payload: dict) -> bool
     return False
 
 
+def _has_provider_answer_confirmation(call: CallSession, raw_payload: dict) -> bool:
+    if not isinstance(raw_payload, dict):
+        raw_payload = {}
+
+    if call.status == CallStatus.HUMAN_DETECTED:
+        return True
+
+    payload_disposition = _extract_provider_disposition(raw_payload)
+    if payload_disposition == "answered":
+        return True
+
+    event_type = _extract_event_type(raw_payload)
+    if event_type and any(token in event_type for token in ("answered", "connected")):
+        return True
+
+    candidates: list[object] = []
+    last_event = raw_payload.get("last_event")
+    if isinstance(last_event, dict):
+        candidates.append(_first_present(last_event, ("AnsweredTime", "AnswerTime", "ConnectTime", "BridgeTime")))
+        if isinstance(last_event.get("Call"), dict):
+            candidates.append(
+                _first_present(last_event.get("Call", {}), ("AnsweredTime", "AnswerTime", "ConnectTime", "BridgeTime"))
+            )
+
+    poll = raw_payload.get("exotel_poll")
+    if isinstance(poll, dict):
+        call_data = poll.get("call")
+        raw_data = poll.get("raw")
+        if isinstance(call_data, dict):
+            candidates.append(_first_present(call_data, ("AnsweredTime", "AnswerTime", "ConnectTime", "BridgeTime")))
+        if isinstance(raw_data, dict):
+            candidates.append(_first_present(raw_data, ("AnsweredTime", "AnswerTime", "ConnectTime", "BridgeTime")))
+            if isinstance(raw_data.get("Call"), dict):
+                candidates.append(
+                    _first_present(raw_data.get("Call", {}), ("AnsweredTime", "AnswerTime", "ConnectTime", "BridgeTime"))
+                )
+
+    started_at = call.started_at or call.created_at
+    for value in candidates:
+        parsed = _parse_provider_datetime(value)
+        if _is_valid_provider_end_time(parsed, started_at):
+            return True
+
+    return False
+
+
+def _is_call_waiting_for_customer_pickup(call: CallSession | None) -> bool:
+    if not call:
+        return False
+
+    if call.status in {CallStatus.QUEUED, CallStatus.DIALING, CallStatus.RINGING}:
+        return True
+
+    if call.status in {CallStatus.BRIDGED, CallStatus.HUMAN_DETECTED}:
+        raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
+        return not _has_provider_answer_confirmation(call, raw_payload)
+
+    return False
+
+
 def _to_call_outcome(status: str) -> str:
     value = str(status or "").strip().lower()
     if value in {"answered", "completed"}:
         return "connected"
-    if value in {"no-answer", "no_answer"}:
+    if value in {"no-answer", "no_answer", "sdr-cut"}:
         return "no_answer"
     if value in {"busy"}:
         return "busy"
@@ -5598,7 +6099,7 @@ def _extract_provider_disposition(raw_payload: dict) -> str:
         return "cancelled"
     if has_any(("failed", "failure", "error", "rejected", "unreachable")):
         return "failed"
-    if has_any(("answered", "connected", "in-progress", "inprogress", "human_detected", "human")):
+    if has_any(("answered", "connected", "human_detected", "human")):
         return "answered"
     if has_any(("completed", "terminal", "hangup", "disconnected")):
         return "completed"
@@ -5609,11 +6110,23 @@ def _derive_display_status(call: CallSession) -> str:
     base_status = _status_to_log_status(call.status)
     raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
 
+    event_type = _extract_event_type(raw_payload)
     payload_disposition = _extract_provider_disposition(raw_payload)
+
+    manual_hangup_requested = isinstance(raw_payload.get("manual_hangup_requested"), dict)
+    provider_negative_disposition = payload_disposition in {"busy", "no-answer", "cancelled", "failed"}
+    event_negative_disposition = bool(
+        event_type
+        and any(token in event_type for token in ("busy", "no-answer", "no_answer", "cancelled", "canceled", "failed"))
+    )
+    connected_event = bool(event_type and any(token in event_type for token in ("answered", "connected")))
+    was_connected = bool(call.answered_at) or base_status == "answered" or payload_disposition == "answered" or connected_event
+
+    if manual_hangup_requested and was_connected and not provider_negative_disposition and not event_negative_disposition:
+        return "sdr-cut"
+
     if payload_disposition:
         return payload_disposition
-
-    event_type = _extract_event_type(raw_payload)
 
     if event_type:
         if any(token in event_type for token in ("busy",)):
@@ -5622,7 +6135,7 @@ def _derive_display_status(call: CallSession) -> str:
             return "no-answer"
         if any(token in event_type for token in ("cancelled", "canceled")):
             return "cancelled"
-        if any(token in event_type for token in ("answered", "connected", "in-progress", "inprogress")):
+        if any(token in event_type for token in ("answered", "connected")):
             return "answered"
         if any(token in event_type for token in ("failed",)):
             return "failed"
@@ -5801,12 +6314,13 @@ def _serialize_call_log(call: CallSession, include_raw: bool = False) -> dict:
     hubspot_sync = raw_payload.get("hubspot_sync") if isinstance(raw_payload.get("hubspot_sync"), dict) else {}
     transcript_status = str(raw_payload.get("transcript_status") or "").strip().lower()
     transcript = str(raw_payload.get("transcript") or "").strip()
+    transcript_error = str(raw_payload.get("transcript_error") or "").strip()
     disposition = _safe_get_call_disposition(call)
 
     if call.transcript_url:
         transcript_status = "completed"
-    elif transcript_status not in {"processing", "completed"}:
-        transcript_status = "none"
+    elif transcript_status not in {"processing", "completed", "failed"}:
+        transcript_status = "failed" if transcript_error else "none"
 
     initiated_at = call.started_at or call.created_at
     init_request = raw_payload.get("init_request") if isinstance(raw_payload.get("init_request"), dict) else {}
@@ -5828,6 +6342,7 @@ def _serialize_call_log(call: CallSession, include_raw: bool = False) -> dict:
         "recording_url": call.recording_url,
         "transcript_status": transcript_status,
         "transcript": transcript,
+        "transcript_error": transcript_error,
         "initiated_at": initiated_at.isoformat() if initiated_at else None,
         "started_at": call.started_at.isoformat() if call.started_at else None,
         "answered_at": call.answered_at.isoformat() if call.answered_at else None,
@@ -5917,8 +6432,10 @@ def _map_exotel_status_to_call_status(status_text: str) -> str:
         return CallStatus.FAILED
     if any(token in value for token in ("completed", "terminal", "hangup", "disconnected")):
         return CallStatus.COMPLETED
-    if any(token in value for token in ("answered", "connected", "in-progress", "inprogress")):
+    if any(token in value for token in ("answered", "connected")):
         return CallStatus.BRIDGED
+    if any(token in value for token in ("in-progress", "inprogress")):
+        return CallStatus.RINGING
     if "ring" in value:
         return CallStatus.RINGING
     if any(token in value for token in ("queued", "initiated", "start", "dialing", "progress")):

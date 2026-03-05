@@ -5,13 +5,33 @@ import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField,
     Select, MenuItem, FormControl, InputLabel, Grid, Pagination, InputAdornment
 } from '@mui/material';
-import { Search, Download, Mic, Sync } from '@mui/icons-material';
+import { Search, Mic, Sync } from '@mui/icons-material';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 
 const CALL_COLORS = {
-    answered: '#10b981', 'no-answer': '#f59e0b', busy: '#f59e0b',
+    answered: '#10b981', 'sdr-cut': '#ef4444', 'no-answer': '#f59e0b', busy: '#f59e0b',
     failed: '#ef4444', completed: '#0142a2', initiated: '#3b82f6', cancelled: '#64748b'
+};
+
+const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
+const formatCallStatus = (status) => {
+    const normalized = normalizeCallStatus(status);
+    if (!normalized) return '-';
+    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
+    return normalized
+        .split('-')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+};
+const normalizeHubspotSyncStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
+const isHubspotSynced = (log) => {
+    const status = normalizeHubspotSyncStatus(log?.hubspot_sync_status);
+    if (['success', 'synced', 'completed', 'ok'].includes(status)) return true;
+    if (String(log?.hubspot_task_object_id || '').trim()) return true;
+    if (String(log?.hubspot_call_object_id || '').trim()) return true;
+    return false;
 };
 
 export default function CallLogsPage() {
@@ -45,10 +65,14 @@ export default function CallLogsPage() {
 
     const triggerTranscription = async (id) => {
         try {
-            await api.post(`/call-logs/${id}/trigger_transcription/`);
-            toast.success('Transcription started');
+            const { data } = await api.post(`/call-logs/${id}/trigger_transcription/`);
+            if (data?.queued === false) {
+                toast.error(data?.error || 'Transcription queue unavailable');
+            } else {
+                toast.success('Transcription started');
+            }
             fetchLogs();
-        } catch (e) { toast.error('Failed'); }
+        } catch (e) { toast.error(e?.response?.data?.error || 'Failed'); }
     };
 
     const syncFromExotel = async () => {
@@ -100,8 +124,8 @@ export default function CallLogsPage() {
                     <InputLabel>Status</InputLabel>
                     <Select value={statusFilter} label="Status" onChange={e => { setStatusFilter(e.target.value); setPage(1); }}>
                         <MenuItem value="">All</MenuItem>
-                        {['answered', 'no-answer', 'busy', 'failed', 'completed', 'cancelled'].map(s => (
-                            <MenuItem key={s} value={s}>{s}</MenuItem>
+                        {['answered', 'sdr-cut', 'no-answer', 'busy', 'failed', 'completed', 'cancelled'].map(s => (
+                            <MenuItem key={s} value={s}>{formatCallStatus(s)}</MenuItem>
                         ))}
                     </Select>
                 </FormControl>
@@ -115,16 +139,20 @@ export default function CallLogsPage() {
                                 <TableCell>Contact</TableCell>
                                 <TableCell>Phone</TableCell>
                                 <TableCell>Campaign</TableCell>
-                                <TableCell>Agent</TableCell>
+                                <TableCell>SDR</TableCell>
                                 <TableCell>Status</TableCell>
                                 <TableCell>Duration</TableCell>
+                                <TableCell>HubSpot Sync</TableCell>
                                 <TableCell>Recording</TableCell>
                                 <TableCell>Transcript</TableCell>
                                 <TableCell>Date/Time</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {logs.map(log => (
+                            {logs.map(log => {
+                                const statusKey = normalizeCallStatus(log.status);
+                                const hubspotSynced = isHubspotSynced(log);
+                                return (
                                 <TableRow key={log.id} hover
                                     onClick={() => setSelected(log)}
                                     sx={{ cursor: 'pointer' }}>
@@ -141,26 +169,48 @@ export default function CallLogsPage() {
                                         <Typography fontSize="0.875rem">{log.agent_name}</Typography>
                                     </TableCell>
                                     <TableCell>
-                                        <Chip label={log.status} size="small"
-                                            sx={{ bgcolor: `${CALL_COLORS[log.status] || '#64748b'}25`, color: CALL_COLORS[log.status] || '#94a3b8', fontSize: '0.7rem' }} />
+                                        <Chip label={formatCallStatus(log.status)} size="small"
+                                            sx={{ bgcolor: `${CALL_COLORS[statusKey] || '#64748b'}25`, color: CALL_COLORS[statusKey] || '#94a3b8', fontSize: '0.7rem' }} />
                                     </TableCell>
                                     <TableCell>
                                         <Typography fontSize="0.875rem" fontFamily="monospace">{log.duration_formatted}</Typography>
                                     </TableCell>
                                     <TableCell>
+                                        <Chip
+                                            label={hubspotSynced ? 'Yes' : 'No'}
+                                            size="small"
+                                            sx={{
+                                                bgcolor: hubspotSynced ? '#10b98125' : '#ef444425',
+                                                color: hubspotSynced ? '#10b981' : '#ef4444',
+                                                fontSize: '0.7rem',
+                                                fontWeight: 600,
+                                            }}
+                                        />
+                                    </TableCell>
+                                    <TableCell>
                                         {log.recording_url ? (
-                                            <Tooltip title="Download Recording">
-                                                <IconButton size="small" href={log.recording_url} target="_blank"
-                                                    sx={{ color: '#0142a2' }} onClick={e => e.stopPropagation()}>
-                                                    <Download fontSize="small" />
-                                                </IconButton>
-                                            </Tooltip>
+                                            <Button
+                                                size="small"
+                                                variant="text"
+                                                onClick={e => {
+                                                    e.stopPropagation();
+                                                    window.open(log.recording_url, '_blank', 'noopener,noreferrer');
+                                                }}
+                                                sx={{ textTransform: 'none', fontWeight: 700, minWidth: 0, px: 1, color: '#0142a2' }}
+                                            >
+                                                Recording
+                                            </Button>
                                         ) : <Typography fontSize="0.75rem" color="text.disabled">—</Typography>}
                                     </TableCell>
                                     <TableCell>
                                         {log.transcript_status === 'completed' ? (
                                             <Chip label="Done" size="small"
                                                 sx={{ bgcolor: '#10b98120', color: '#10b981', fontSize: '0.65rem' }} />
+                                        ) : log.transcript_status === 'failed' ? (
+                                            <Tooltip title={log.transcript_error || 'Transcription failed'}>
+                                                <Chip label="Failed" size="small"
+                                                    sx={{ bgcolor: '#ef444420', color: '#ef4444', fontSize: '0.65rem' }} />
+                                            </Tooltip>
                                         ) : log.recording_url && log.transcript_status !== 'processing' ? (
                                             <Tooltip title="Run Transcription">
                                                 <IconButton size="small" onClick={e => { e.stopPropagation(); triggerTranscription(log.id); }}
@@ -177,7 +227,7 @@ export default function CallLogsPage() {
                                         </Typography>
                                     </TableCell>
                                 </TableRow>
-                            ))}
+                            )})}
                         </TableBody>
                     </Table>
                 </TableContainer>
@@ -202,15 +252,16 @@ export default function CallLogsPage() {
                     <DialogContent>
                         <Grid container spacing={2} sx={{ mb: 2 }}>
                             {[
-                                { label: 'Status', value: selected.status },
+                                { label: 'Status', value: formatCallStatus(selected.status) },
                                 { label: 'Duration', value: selected.duration_formatted },
-                                { label: 'Agent', value: selected.agent_name },
+                                { label: 'SDR', value: selected.agent_name },
                                 { label: 'Campaign', value: selected.campaign_name },
                                 { label: 'Outcome', value: selected.call_outcome || '-' },
                                 { label: 'Date', value: new Date(selected.initiated_at).toLocaleString() },
                                 { label: 'Deal ID', value: selected.deal_id || '-' },
                                 { label: 'Deal Name', value: selected.deal_name || '-' },
-                                { label: 'HubSpot Sync', value: selected.hubspot_sync_status || '-' },
+                                { label: 'HubSpot Sync', value: isHubspotSynced(selected) ? 'Yes' : 'No' },
+                                { label: 'HubSpot Sync Status', value: selected.hubspot_sync_status || '-' },
                                 { label: 'HubSpot Task ID', value: selected.hubspot_task_object_id || '-' },
                             ].map(({ label, value }) => (
                                 <Grid item xs={6} key={label}>
@@ -239,6 +290,16 @@ export default function CallLogsPage() {
                                 <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.05)', maxHeight: 300, overflow: 'auto' }}>
                                     <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
                                         {selected.transcript}
+                                    </Typography>
+                                </Box>
+                            </Box>
+                        )}
+                        {!selected.transcript && selected.transcript_error && (
+                            <Box sx={{ mt: 2 }}>
+                                <Typography variant="subtitle2" fontWeight={600} mb={1}>Transcript</Typography>
+                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(239,68,68,0.08)' }}>
+                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7, color: '#b91c1c' }}>
+                                        {selected.transcript_error}
                                     </Typography>
                                 </Box>
                             </Box>

@@ -39,6 +39,7 @@ const StatCard = ({ title, value, icon, color, subtitle, loading }) => (
 
 const callStatusColors = {
     answered: '#10b981',
+    'sdr-cut': '#ef4444',
     'no-answer': '#f59e0b',
     no_answer: '#f59e0b',
     busy: '#f59e0b',
@@ -46,6 +47,18 @@ const callStatusColors = {
     completed: '#0142a2',
     initiated: '#3b82f6',
     cancelled: '#64748b',
+};
+
+const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
+const formatCallStatus = (status) => {
+    const normalized = normalizeCallStatus(status);
+    if (!normalized) return '-';
+    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
+    return normalized
+        .split('-')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
 };
 
 const initialStats = {
@@ -199,7 +212,7 @@ export default function DashboardPage() {
                                     ) : Object.entries(statusCounts).map(([status, value]) => (
                                         <Grid item xs={6} sm={4} md={3} key={status}>
                                             <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.08)', border: '1px solid rgba(1,66,162,0.12)' }}>
-                                                <Typography variant="caption" color="text.secondary">{status}</Typography>
+                                                <Typography variant="caption" color="text.secondary">{formatCallStatus(status)}</Typography>
                                                 <Typography variant="h6" fontWeight={700}>{Number(value).toLocaleString()}</Typography>
                                             </Box>
                                         </Grid>
@@ -221,7 +234,7 @@ export default function DashboardPage() {
                                 <TableRow>
                                     <TableCell>Contact</TableCell>
                                     <TableCell>Campaign</TableCell>
-                                    <TableCell>Agent</TableCell>
+                                    <TableCell>SDR</TableCell>
                                     <TableCell>Status</TableCell>
                                     <TableCell>Duration</TableCell>
                                     <TableCell>Time</TableCell>
@@ -242,7 +255,9 @@ export default function DashboardPage() {
                                             No call activity yet
                                         </TableCell>
                                     </TableRow>
-                                ) : recentCalls.slice(0, 8).map(call => (
+                                ) : recentCalls.slice(0, 8).map(call => {
+                                    const statusKey = normalizeCallStatus(call.status);
+                                    return (
                                     <TableRow key={call.id} hover>
                                         <TableCell>
                                             <Box>
@@ -258,9 +273,9 @@ export default function DashboardPage() {
                                         </TableCell>
                                         <TableCell>
                                             <Chip
-                                                label={call.status}
+                                                label={formatCallStatus(call.status)}
                                                 size="small"
-                                                sx={{ bgcolor: `${callStatusColors[call.status] || '#64748b'}25`, color: callStatusColors[call.status] || '#64748b' }}
+                                                sx={{ bgcolor: `${callStatusColors[statusKey] || '#64748b'}25`, color: callStatusColors[statusKey] || '#64748b' }}
                                             />
                                         </TableCell>
                                         <TableCell>
@@ -272,7 +287,7 @@ export default function DashboardPage() {
                                             </Typography>
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                )})}
                             </TableBody>
                         </Table>
                     </TableContainer>
