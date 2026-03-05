@@ -15,7 +15,7 @@ import {
     Typography,
 } from '@mui/material';
 import { Backspace, Call, Contacts, Dialpad, Pause, PlayArrow, Refresh } from '@mui/icons-material';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { request } from '../lib/api';
 import toast from 'react-hot-toast';
 
@@ -38,6 +38,7 @@ function normalizePhone(value) {
 }
 
 export default function DialPage() {
+    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const campaignId = searchParams.get('campaign_id');
     const [tab, setTab] = useState(0);
@@ -254,6 +255,14 @@ export default function DialPage() {
             });
             setLastCall(data.call || null);
             toast.success('Call initiated');
+
+            const callPublicId = String(data?.call?.public_id || data?.call?.id || '').trim();
+            if (callPublicId) {
+                const nextPath = campaignId
+                    ? `/dial/call/${encodeURIComponent(callPublicId)}?campaign_id=${encodeURIComponent(campaignId)}`
+                    : `/dial/call/${encodeURIComponent(callPublicId)}`;
+                navigate(nextPath);
+            }
         } catch (error) {
             toast.error(error.message || 'Failed to start call');
         } finally {

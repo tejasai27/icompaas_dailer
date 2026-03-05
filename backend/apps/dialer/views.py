@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.files.storage import default_storage
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Max, Q
 from django.db.utils import OperationalError, ProgrammingError
@@ -34,14 +35,20 @@ from .models import (
     CampaignLead,
     CampaignLeadStatus,
     CampaignStatus,
+    CallDisposition,
     CallSession,
     CallStatus,
+    CallOutcome,
     Lead,
     LeadDialState,
     ProviderType,
 )
 
 logger = logging.getLogger("dialer.campaign")
+
+RUNTIME_EXOTEL_WAIT_AUDIO_CACHE_KEY = "dialer:runtime:exotel_wait_audio"
+WAIT_AUDIO_ALLOWED_EXTENSIONS = {"mp3", "wav", "ogg", "m4a"}
+WAIT_AUDIO_MAX_BYTES = int(os.getenv("EXOTEL_WAIT_AUDIO_MAX_BYTES", "5242880") or 5242880)
 
 
 def _debug_runtime(tag: str, payload: object) -> None:
@@ -51,6 +58,50 @@ def _debug_runtime(tag: str, payload: object) -> None:
         text = str(payload)
     print(f"[EXOTEL_DEBUG] {tag}: {text}", flush=True)
     logger.info("EXOTEL_DEBUG %s %s", tag, text)
+
+
+def _public_base_url_from_request(request: HttpRequest) -> str:
+    configured_base = str(getattr(settings, "PUBLIC_WEBHOOK_BASE_URL", "") or "").strip().rstrip("/")
+    if configured_base:
+        return configured_base
+    return request.build_absolute_uri("/").rstrip("/")
+
+
+def _build_absolute_media_url(request: HttpRequest, relative_url: str) -> str:
+    text = str(relative_url or "").strip()
+    if not text:
+        return ""
+    if text.startswith(("http://", "https://")):
+        return text
+    if not text.startswith("/"):
+        text = f"/{text}"
+    return f"{_public_base_url_from_request(request)}{text}"
+
+
+def _get_runtime_exotel_wait_audio() -> dict:
+    cached = cache.get(RUNTIME_EXOTEL_WAIT_AUDIO_CACHE_KEY)
+    if isinstance(cached, dict):
+        wait_url = str(cached.get("wait_url") or "").strip()
+        if wait_url:
+            return {
+                "wait_url": wait_url,
+                "file_name": str(cached.get("file_name") or ""),
+                "uploaded_at": str(cached.get("uploaded_at") or ""),
+                "source": "uploaded",
+            }
+
+    env_wait_url = str(os.getenv("EXOTEL_WAIT_URL", "") or "").strip()
+    if env_wait_url:
+        return {"wait_url": env_wait_url, "file_name": "", "uploaded_at": "", "source": "env"}
+    return {"wait_url": "", "file_name": "", "uploaded_at": "", "source": "none"}
+
+
+def _assign_runtime_exotel_wait_url(provider: ExotelProvider) -> str:
+    wait_audio = _get_runtime_exotel_wait_audio()
+    wait_url = str(wait_audio.get("wait_url") or "").strip()
+    if wait_url:
+        provider.wait_url = wait_url
+    return wait_url
 
 
 def _active_call_not_ended_filter() -> Q:
@@ -210,6 +261,68 @@ def health(request: HttpRequest) -> JsonResponse:
     return JsonResponse(
         {"ok": db_ok and cache_ok, "service": "dialer-backend", "db": db_ok, "cache": cache_ok}
     )
+
+
+@csrf_exempt
+@require_GET
+def get_exotel_wait_audio(request: HttpRequest) -> JsonResponse:
+    return JsonResponse({"ok": True, **_get_runtime_exotel_wait_audio()})
+
+
+@csrf_exempt
+@require_POST
+def upload_exotel_wait_audio(request: HttpRequest) -> JsonResponse:
+    upload = request.FILES.get("file") or request.FILES.get("audio")
+    if not upload:
+        return JsonResponse({"error": "audio file is required under 'file'"}, status=400)
+
+    file_size = int(getattr(upload, "size", 0) or 0)
+    if file_size > WAIT_AUDIO_MAX_BYTES:
+        return JsonResponse(
+            {
+                "error": "file_too_large",
+                "max_bytes": WAIT_AUDIO_MAX_BYTES,
+                "message": "Audio file is too large",
+            },
+            status=400,
+        )
+
+    original_name = str(getattr(upload, "name", "") or "wait-audio").strip()
+    extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+    if extension not in WAIT_AUDIO_ALLOWED_EXTENSIONS:
+        return JsonResponse(
+            {
+                "error": "unsupported_file_type",
+                "allowed_extensions": sorted(WAIT_AUDIO_ALLOWED_EXTENSIONS),
+                "message": "Only mp3, wav, ogg, m4a are supported",
+            },
+            status=400,
+        )
+
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", original_name).strip("._")
+    if not safe_name:
+        safe_name = f"wait_audio.{extension}"
+
+    storage_path = f"dialer/wait-audio/{timezone.now().strftime('%Y%m%d')}/{uuid4().hex}_{safe_name}"
+    saved_path = default_storage.save(storage_path, upload)
+    media_url = default_storage.url(saved_path)
+    wait_url = _build_absolute_media_url(request, media_url)
+
+    payload = {
+        "wait_url": wait_url,
+        "file_name": original_name,
+        "uploaded_at": timezone.now().isoformat(),
+    }
+    cache.set(RUNTIME_EXOTEL_WAIT_AUDIO_CACHE_KEY, payload, timeout=None)
+
+    return JsonResponse({"ok": True, **payload})
+
+
+@csrf_exempt
+@require_POST
+def clear_exotel_wait_audio(request: HttpRequest) -> JsonResponse:
+    cache.delete(RUNTIME_EXOTEL_WAIT_AUDIO_CACHE_KEY)
+    return JsonResponse({"ok": True, "cleared": True, **_get_runtime_exotel_wait_audio()})
 
 
 @require_GET
@@ -1445,7 +1558,7 @@ def list_call_logs(request: HttpRequest) -> JsonResponse:
     ordering = str(request.GET.get("ordering") or "-initiated_at").strip()
     include_raw = _parse_bool(request.GET.get("include_raw"), False)
 
-    queryset = CallSession.objects.select_related("lead", "agent")
+    queryset = CallSession.objects.select_related("lead", "agent", "disposition")
 
     if search:
         queryset = queryset.filter(
@@ -1509,6 +1622,94 @@ def list_call_logs(request: HttpRequest) -> JsonResponse:
             "results": paged_results,
             "summary": summary_filtered,
             "summary_all": summary_all,
+        }
+    )
+
+
+@csrf_exempt
+@require_GET
+def get_call_session(request: HttpRequest, call_public_id: UUID) -> JsonResponse:
+    call = get_object_or_404(
+        CallSession.objects.select_related("lead", "agent", "disposition"),
+        public_id=call_public_id,
+    )
+    include_raw = _parse_bool(request.GET.get("include_raw"), False)
+    sync_exotel = _parse_bool(request.GET.get("sync_exotel"), True)
+
+    if sync_exotel and call.provider == ProviderType.EXOTEL and call.provider_call_uuid:
+        _poll_single_exotel_call(call)
+        call = CallSession.objects.select_related("lead", "agent", "disposition").get(id=call.id)
+
+    return JsonResponse({"ok": True, "call": _serialize_call_log(call, include_raw=include_raw)})
+
+
+@csrf_exempt
+@require_POST
+def hangup_call_session(request: HttpRequest, call_public_id: UUID) -> JsonResponse:
+    call = get_object_or_404(
+        CallSession.objects.select_related("lead", "agent", "disposition"),
+        public_id=call_public_id,
+    )
+    provider = get_provider()
+
+    if call.provider == ProviderType.EXOTEL and isinstance(provider, ExotelProvider) and call.provider_call_uuid:
+        provider.hangup(call.provider_call_uuid)
+
+    raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
+    raw_payload["manual_hangup_requested"] = {
+        "at": timezone.now().isoformat(),
+        "provider_call_uuid": call.provider_call_uuid,
+    }
+    call.raw_provider_payload = raw_payload
+    call.save(update_fields=["raw_provider_payload"])
+
+    call = CallSession.objects.select_related("lead", "agent", "disposition").get(id=call.id)
+    return JsonResponse({"ok": True, "call": _serialize_call_log(call, include_raw=False)})
+
+
+@csrf_exempt
+@require_POST
+def save_call_disposition(request: HttpRequest, call_public_id: UUID) -> JsonResponse:
+    call = get_object_or_404(
+        CallSession.objects.select_related("lead", "agent", "disposition"),
+        public_id=call_public_id,
+    )
+    payload = _load_json_body(request)
+    outcome = str(payload.get("outcome") or "").strip().lower()
+    notes = str(payload.get("notes") or "").strip()
+
+    valid_outcomes = {choice[0] for choice in CallOutcome.choices}
+    if outcome not in valid_outcomes:
+        return JsonResponse(
+            {
+                "error": "invalid_outcome",
+                "allowed_outcomes": sorted(valid_outcomes),
+            },
+            status=400,
+        )
+
+    user = getattr(request, "user", None)
+    created_by = user if getattr(user, "is_authenticated", False) else None
+
+    disposition, _ = CallDisposition.objects.update_or_create(
+        call=call,
+        defaults={
+            "outcome": outcome,
+            "notes": notes,
+            "created_by": created_by,
+        },
+    )
+
+    call = CallSession.objects.select_related("lead", "agent", "disposition").get(id=call.id)
+    return JsonResponse(
+        {
+            "ok": True,
+            "disposition": {
+                "outcome": disposition.outcome,
+                "notes": disposition.notes,
+                "created_at": disposition.created_at.isoformat() if disposition.created_at else None,
+            },
+            "call": _serialize_call_log(call, include_raw=False),
         }
     )
 
@@ -1625,6 +1826,8 @@ def start_exotel_call(request: HttpRequest) -> JsonResponse:
         if public_base:
             callback_url = f"{public_base}/api/v1/dialer/webhooks/exotel/"
 
+    effective_wait_url = _assign_runtime_exotel_wait_url(provider)
+
     call = CallSession.objects.create(
         lead=lead,
         agent=agent,
@@ -1642,6 +1845,7 @@ def start_exotel_call(request: HttpRequest) -> JsonResponse:
                 "campaign_name": campaign.name if campaign else "",
                 "dial_sequence": "lead_first",
                 "max_duration_seconds": max_call_duration_seconds,
+                "wait_audio_url": effective_wait_url,
             }
         },
     )
@@ -1719,6 +1923,8 @@ def start_exotel_call(request: HttpRequest) -> JsonResponse:
         {
             "call": {
                 "id": str(call.public_id),
+                "public_id": str(call.public_id),
+                "numeric_id": call.id,
                 "provider": call.provider,
                 "provider_call_uuid": call.provider_call_uuid,
                 "status": call.status,
@@ -2710,6 +2916,8 @@ def _initiate_campaign_call(campaign: Campaign, campaign_lead: CampaignLead) -> 
     callback_url = str(getattr(settings, "PUBLIC_WEBHOOK_BASE_URL", "") or "").strip().rstrip("/")
     callback_url = f"{callback_url}/api/v1/dialer/webhooks/exotel/" if callback_url else ""
 
+    effective_wait_url = _assign_runtime_exotel_wait_url(provider)
+
     max_call_duration_seconds = int(getattr(settings, "EXOTEL_MAX_CALL_DURATION_SECONDS", 60) or 60)
     call = CallSession.objects.create(
         lead=lead,
@@ -2728,6 +2936,7 @@ def _initiate_campaign_call(campaign: Campaign, campaign_lead: CampaignLead) -> 
                 "campaign_name": campaign.name,
                 "dial_sequence": "lead_first",
                 "max_duration_seconds": max_call_duration_seconds,
+                "wait_audio_url": effective_wait_url,
             }
         },
     )
@@ -3608,6 +3817,7 @@ def _serialize_call_log(call: CallSession, include_raw: bool = False) -> dict:
     raw_payload = call.raw_provider_payload if isinstance(call.raw_provider_payload, dict) else {}
     transcript_status = str(raw_payload.get("transcript_status") or "").strip().lower()
     transcript = str(raw_payload.get("transcript") or "").strip()
+    disposition = getattr(call, "disposition", None)
 
     if call.transcript_url:
         transcript_status = "completed"
@@ -3629,15 +3839,21 @@ def _serialize_call_log(call: CallSession, include_raw: bool = False) -> dict:
         "campaign_name": campaign_name,
         "agent_name": call.agent.display_name if call.agent else "Unassigned",
         "status": _derive_display_status(call),
+        "internal_status": call.status,
         "duration_formatted": _format_duration(call),
         "recording_url": call.recording_url,
         "transcript_status": transcript_status,
         "transcript": transcript,
         "initiated_at": initiated_at.isoformat() if initiated_at else None,
+        "started_at": call.started_at.isoformat() if call.started_at else None,
+        "answered_at": call.answered_at.isoformat() if call.answered_at else None,
+        "ended_at": call.ended_at.isoformat() if call.ended_at else None,
         "provider_call_uuid": call.provider_call_uuid,
         "payload_event_type": _extract_event_type(raw_payload),
         "payload_disposition": _extract_provider_disposition(raw_payload),
         "terminal_processed": bool(raw_payload.get("campaign_terminal_processed")),
+        "call_outcome": disposition.outcome if disposition else "",
+        "agent_notes": disposition.notes if disposition else "",
     }
     if include_raw:
         result["raw_provider_payload"] = raw_payload

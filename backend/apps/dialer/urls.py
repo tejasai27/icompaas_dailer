@@ -3,6 +3,9 @@ from . import views
 
 urlpatterns = [
     path("health/", views.health, name="health"),
+    path("settings/exotel/wait-audio/", views.get_exotel_wait_audio, name="get-exotel-wait-audio"),
+    path("settings/exotel/wait-audio/upload/", views.upload_exotel_wait_audio, name="upload-exotel-wait-audio"),
+    path("settings/exotel/wait-audio/clear/", views.clear_exotel_wait_audio, name="clear-exotel-wait-audio"),
     path("agents/", views.list_agents, name="list-agents"),
     path("agents/create/", views.create_agent, name="create-agent"),
     path("agents/<int:agent_id>/update/", views.update_agent, name="update-agent"),
@@ -43,6 +46,9 @@ urlpatterns = [
     path("leads/upload/", views.upload_leads_csv, name="upload-leads-csv"),
     path("leads/manual/", views.create_manual_leads, name="create-manual-leads"),
     path("call-logs/", views.list_call_logs, name="list-call-logs"),
+    path("calls/<uuid:call_public_id>/", views.get_call_session, name="get-call-session"),
+    path("calls/<uuid:call_public_id>/hangup/", views.hangup_call_session, name="hangup-call-session"),
+    path("calls/<uuid:call_public_id>/disposition/", views.save_call_disposition, name="save-call-disposition"),
     path("call-logs/sync/exotel/", views.sync_exotel_call_logs, name="sync-exotel-call-logs"),
     path(
         "call-logs/<int:call_id>/trigger_transcription/",

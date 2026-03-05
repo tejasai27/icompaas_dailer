@@ -28,6 +28,9 @@ class ExotelProvider(TelephonyProvider):
         self.subdomain = os.getenv("EXOTEL_SUBDOMAIN", "").replace("@", "").strip()
         self.default_caller_id = os.getenv("EXOTEL_CALLER_ID", "").strip()
         self.timeout_seconds = float(os.getenv("EXOTEL_TIMEOUT_SECONDS", "10"))
+        self.wait_url = os.getenv("EXOTEL_WAIT_URL", "").strip()
+        self.start_playback_value = os.getenv("EXOTEL_START_PLAYBACK_VALUE", "").strip()
+        self.start_playback_to = os.getenv("EXOTEL_START_PLAYBACK_TO", "").strip().lower()
 
     @property
     def configured(self) -> bool:
@@ -70,6 +73,17 @@ class ExotelProvider(TelephonyProvider):
             ("CallerId", caller_id),
         ]
 
+        # Waiting audio while Exotel connects the second leg.
+        if self.wait_url:
+            payload.append(("WaitUrl", self.wait_url))
+
+        # Optional pre-connect audio playback (e.g., "Please wait while we connect you").
+        # Value is typically an audio URL supported by Exotel.
+        if self.start_playback_value:
+            payload.append(("StartPlaybackValue", self.start_playback_value))
+            if self.start_playback_to in {"callee", "both"}:
+                payload.append(("StartPlaybackTo", "Both" if self.start_playback_to == "both" else "Callee"))
+
         # Enable recording by default unless explicitly disabled via env.
         record_calls_raw = str(os.getenv("EXOTEL_RECORD_CALLS", "1")).strip().lower()
         record_calls = record_calls_raw in {"1", "true", "yes", "on"}
@@ -103,6 +117,10 @@ class ExotelProvider(TelephonyProvider):
                 "callback_url": request.callback_url,
                 "metadata": request.metadata or {},
                 "max_duration_seconds": request.max_duration_seconds,
+                "wait_url_enabled": bool(self.wait_url),
+                "wait_url": self.wait_url or None,
+                "start_playback_enabled": bool(self.start_playback_value),
+                "start_playback_to": self.start_playback_to or None,
                 "payload": payload,
             },
         )

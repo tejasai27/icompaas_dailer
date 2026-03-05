@@ -11,6 +11,7 @@ import CampaignCreatePage from './pages/CampaignCreatePage';
 import CampaignDetailPage from './pages/CampaignDetailPage';
 import ContactsPage from './pages/ContactsPage';
 import DialPage from './pages/DialPage';
+import DialCallPage from './pages/DialCallPage';
 import CallLogsPage from './pages/CallLogsPage';
 import SettingsPage from './pages/SettingsPage';
 import SalesfloorPage from './pages/SalesfloorPage';
@@ -99,6 +100,7 @@ function App() {
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="dial" element={<DialPage />} />
+              <Route path="dial/call/:callPublicId" element={<DialCallPage />} />
               <Route path="campaigns" element={<CampaignsPage />} />
               <Route path="campaigns/new" element={<CampaignCreatePage />} />
               <Route path="campaigns/:id" element={<CampaignDetailPage />} />

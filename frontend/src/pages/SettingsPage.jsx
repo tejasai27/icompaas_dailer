@@ -1,169 +1,193 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     Box, Card, CardContent, Typography, Grid, TextField, Button,
-    Divider, Alert, Switch, FormControlLabel, Chip
+    Divider, Alert, Chip
 } from '@mui/material';
-import { Save, Key, Phone, Refresh } from '@mui/icons-material';
+import { Phone, Refresh, CloudUpload, DeleteOutline } from '@mui/icons-material';
 import toast from 'react-hot-toast';
+import api from '../services/api';
 
 export default function SettingsPage() {
-    const [plivoConfig, setPlivoConfig] = useState({
-        auth_id: '',
-        auth_token: '',
-        from_number: '',
-        webhook_url: 'http://localhost:8000'
+    const [waitAudio, setWaitAudio] = useState({
+        wait_url: '',
+        file_name: '',
+        uploaded_at: '',
+        source: 'none',
     });
-    const [dialerSettings, setDialerSettings] = useState({
-        default_delay: 15,
-        max_retries: 3,
-        whisper_model: 'base',
-        auto_transcribe: true,
-    });
-    const [saved, setSaved] = useState(false);
+    const [audioFile, setAudioFile] = useState(null);
+    const [audioLoading, setAudioLoading] = useState(false);
+    const [audioUploading, setAudioUploading] = useState(false);
+    const [audioClearing, setAudioClearing] = useState(false);
 
-    const handleSave = () => {
-        // In a real app, these would be saved via API to config or .env
-        toast.success('Settings saved! Restart Django server to apply Plivo credentials.');
-        setSaved(true);
+    const loadWaitAudio = async ({ silent = false } = {}) => {
+        if (!silent) setAudioLoading(true);
+        try {
+            const { data } = await api.get('/settings/exotel/wait-audio/');
+            setWaitAudio({
+                wait_url: data?.wait_url || '',
+                file_name: data?.file_name || '',
+                uploaded_at: data?.uploaded_at || '',
+                source: data?.source || 'none',
+            });
+        } catch (error) {
+            if (!silent) {
+                toast.error(error?.response?.data?.error || 'Failed to load wait audio');
+            }
+        } finally {
+            if (!silent) setAudioLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadWaitAudio();
+    }, []);
+
+    const handleAudioUpload = async () => {
+        if (!audioFile) {
+            toast.error('Select an audio file first');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', audioFile);
+
+        setAudioUploading(true);
+        try {
+            const { data } = await api.post('/settings/exotel/wait-audio/upload/', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setWaitAudio({
+                wait_url: data?.wait_url || '',
+                file_name: data?.file_name || '',
+                uploaded_at: data?.uploaded_at || '',
+                source: data?.source || 'uploaded',
+            });
+            setAudioFile(null);
+            toast.success('Wait audio uploaded');
+        } catch (error) {
+            toast.error(error?.response?.data?.message || error?.response?.data?.error || 'Upload failed');
+        } finally {
+            setAudioUploading(false);
+        }
+    };
+
+    const handleClearWaitAudio = async () => {
+        setAudioClearing(true);
+        try {
+            const { data } = await api.post('/settings/exotel/wait-audio/clear/');
+            setWaitAudio({
+                wait_url: data?.wait_url || '',
+                file_name: data?.file_name || '',
+                uploaded_at: data?.uploaded_at || '',
+                source: data?.source || 'none',
+            });
+            toast.success('Uploaded wait audio cleared');
+        } catch (error) {
+            toast.error(error?.response?.data?.error || 'Failed to clear wait audio');
+        } finally {
+            setAudioClearing(false);
+        }
     };
 
     return (
         <Box>
             <Box sx={{ mb: 3 }}>
                 <Typography variant="h4" fontWeight={700}>Settings</Typography>
-                <Typography color="text.secondary" variant="body2">Configure the Power Dialer platform</Typography>
+                <Typography color="text.secondary" variant="body2">Configure Exotel call wait audio</Typography>
             </Box>
 
             <Grid container spacing={3}>
-                {/* Plivo Config */}
-                <Grid item xs={12} md={6}>
+                <Grid item xs={12}>
                     <Card>
                         <CardContent>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                                <Key sx={{ color: '#6366f1' }} />
-                                <Typography variant="subtitle1" fontWeight={700}>Plivo API Configuration</Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 2 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <Phone sx={{ color: '#6366f1' }} />
+                                    <Typography variant="subtitle1" fontWeight={700}>Exotel Wait Audio</Typography>
+                                </Box>
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    startIcon={<Refresh />}
+                                    onClick={() => loadWaitAudio()}
+                                    disabled={audioLoading || audioUploading || audioClearing}
+                                >
+                                    Refresh
+                                </Button>
                             </Box>
 
                             <Alert severity="info" sx={{ mb: 2, bgcolor: 'rgba(59,130,246,0.1)' }}>
-                                Configure these in your <code>.env</code> file in <code>backend/</code> for production.
+                                Upload audio directly here. The app automatically generates and uses a WaitUrl for Exotel.
                             </Alert>
 
                             <Grid container spacing={2}>
                                 <Grid item xs={12}>
-                                    <TextField fullWidth label="Auth ID" value={plivoConfig.auth_id}
-                                        onChange={e => setPlivoConfig({ ...plivoConfig, auth_id: e.target.value })}
-                                        placeholder="MAXXXXXXXXXXXXXXXXXXXXXXXX" size="small" />
+                                    <TextField
+                                        fullWidth
+                                        size="small"
+                                        type="file"
+                                        inputProps={{ accept: '.mp3,.wav,.ogg,.m4a,audio/*' }}
+                                        onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
+                                        helperText="Supported: mp3, wav, ogg, m4a"
+                                    />
                                 </Grid>
                                 <Grid item xs={12}>
-                                    <TextField fullWidth label="Auth Token" type="password"
-                                        value={plivoConfig.auth_token}
-                                        onChange={e => setPlivoConfig({ ...plivoConfig, auth_token: e.target.value })}
-                                        placeholder="••••••••••••••••••••••••••••••••" size="small" />
-                                </Grid>
-                                <Grid item xs={12}>
-                                    <TextField fullWidth label="From Number (Caller ID)"
-                                        value={plivoConfig.from_number}
-                                        onChange={e => setPlivoConfig({ ...plivoConfig, from_number: e.target.value })}
-                                        placeholder="+12345678901" size="small" helperText="Plivo phone number in E.164 format" />
-                                </Grid>
-                                <Grid item xs={12}>
-                                    <TextField fullWidth label="Webhook Base URL"
-                                        value={plivoConfig.webhook_url}
-                                        onChange={e => setPlivoConfig({ ...plivoConfig, webhook_url: e.target.value })}
-                                        size="small" helperText="Publicly accessible URL for Plivo webhooks (use ngrok for dev)" />
+                                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                        <Button
+                                            variant="contained"
+                                            startIcon={<CloudUpload />}
+                                            onClick={handleAudioUpload}
+                                            disabled={!audioFile || audioUploading || audioLoading || audioClearing}
+                                        >
+                                            {audioUploading ? 'Uploading...' : 'Upload Audio'}
+                                        </Button>
+                                        <Button
+                                            variant="outlined"
+                                            color="error"
+                                            startIcon={<DeleteOutline />}
+                                            onClick={handleClearWaitAudio}
+                                            disabled={audioClearing || audioUploading || audioLoading}
+                                        >
+                                            {audioClearing ? 'Clearing...' : 'Clear Uploaded Audio'}
+                                        </Button>
+                                    </Box>
                                 </Grid>
                             </Grid>
 
                             <Divider sx={{ my: 2, borderColor: 'rgba(99,102,241,0.1)' }} />
 
-                            <Typography variant="caption" color="text.secondary" display="block" mb={1}>
-                                Required .env variables:
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                <Typography variant="body2" color="text.secondary">Current source:</Typography>
+                                <Chip
+                                    size="small"
+                                    label={waitAudio.source || 'none'}
+                                    sx={{
+                                        bgcolor: waitAudio.wait_url ? 'rgba(16,185,129,0.15)' : 'rgba(148,163,184,0.15)',
+                                        color: waitAudio.wait_url ? '#10b981' : '#64748b',
+                                    }}
+                                />
+                            </Box>
+                            <Typography variant="body2" sx={{ wordBreak: 'break-all', mb: 1 }}>
+                                {waitAudio.wait_url || 'No wait audio configured'}
                             </Typography>
-                            <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#0f0f1a', fontFamily: 'monospace', fontSize: '0.8rem', color: '#818cf8' }}>
-                                PLIVO_AUTH_ID=MA...<br />
-                                PLIVO_AUTH_TOKEN=...<br />
-                                PLIVO_FROM_NUMBER=+1...<br />
-                                PLIVO_WEBHOOK_BASE_URL=https://...
-                            </Box>
+                            {waitAudio.file_name ? (
+                                <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+                                    File: {waitAudio.file_name}
+                                </Typography>
+                            ) : null}
+                            {waitAudio.uploaded_at ? (
+                                <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+                                    Uploaded: {new Date(waitAudio.uploaded_at).toLocaleString()}
+                                </Typography>
+                            ) : null}
+
+                            {waitAudio.wait_url ? (
+                                <Box sx={{ mt: 1 }}>
+                                    <audio controls src={waitAudio.wait_url} style={{ width: '100%' }} />
+                                </Box>
+                            ) : null}
                         </CardContent>
                     </Card>
-                </Grid>
-
-                {/* Dialer Settings */}
-                <Grid item xs={12} md={6}>
-                    <Card>
-                        <CardContent>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                                <Phone sx={{ color: '#10b981' }} />
-                                <Typography variant="subtitle1" fontWeight={700}>Dialer Defaults</Typography>
-                            </Box>
-
-                            <Grid container spacing={2}>
-                                <Grid item xs={12}>
-                                    <TextField fullWidth type="number" label="Default Delay Between Calls (seconds)"
-                                        value={dialerSettings.default_delay}
-                                        onChange={e => setDialerSettings({ ...dialerSettings, default_delay: e.target.value })}
-                                        size="small" inputProps={{ min: 5, max: 300 }} />
-                                </Grid>
-                                <Grid item xs={12}>
-                                    <TextField fullWidth type="number" label="Default Max Retries"
-                                        value={dialerSettings.max_retries}
-                                        onChange={e => setDialerSettings({ ...dialerSettings, max_retries: e.target.value })}
-                                        size="small" inputProps={{ min: 0, max: 10 }} />
-                                </Grid>
-                                <Grid item xs={12}>
-                                    <TextField fullWidth label="Whisper Model"
-                                        value={dialerSettings.whisper_model}
-                                        onChange={e => setDialerSettings({ ...dialerSettings, whisper_model: e.target.value })}
-                                        size="small" helperText="tiny / base / small / medium / large" select
-                                        SelectProps={{ native: true }}>
-                                        {['tiny', 'base', 'small', 'medium', 'large'].map(m => <option key={m} value={m}>{m}</option>)}
-                                    </TextField>
-                                </Grid>
-                                <Grid item xs={12}>
-                                    <FormControlLabel
-                                        control={
-                                            <Switch
-                                                checked={dialerSettings.auto_transcribe}
-                                                onChange={e => setDialerSettings({ ...dialerSettings, auto_transcribe: e.target.checked })}
-                                                sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#10b981' } }}
-                                            />
-                                        }
-                                        label={<Typography variant="body2">Auto-transcribe completed calls</Typography>}
-                                    />
-                                </Grid>
-                            </Grid>
-                        </CardContent>
-                    </Card>
-
-                    {/* Redis / Celery info */}
-                    <Card sx={{ mt: 2 }}>
-                        <CardContent>
-                            <Typography variant="subtitle1" fontWeight={700} mb={1}>🔄 Worker Status</Typography>
-                            <Alert severity="warning" sx={{ bgcolor: 'rgba(245,158,11,0.1)', mb: 2 }}>
-                                Celery worker must be running for background dialing tasks.
-                            </Alert>
-                            <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#0f0f1a', fontFamily: 'monospace', fontSize: '0.8rem', color: '#818cf8' }}>
-                                # Terminal 1 (Redis)<br />
-                                redis-server<br /><br />
-                                # Terminal 2 (Celery)<br />
-                                celery -A dialer_project worker -l info
-                            </Box>
-                        </CardContent>
-                    </Card>
-                </Grid>
-
-                <Grid item xs={12}>
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <Button
-                            variant="contained"
-                            startIcon={<Save />}
-                            onClick={handleSave}
-                            sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
-                        >
-                            Save Settings
-                        </Button>
-                    </Box>
                 </Grid>
             </Grid>
         </Box>

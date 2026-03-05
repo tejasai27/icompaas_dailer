@@ -40,7 +40,15 @@ In `.env` set:
 - `EXOTEL_SUBDOMAIN=api.in.exotel.com`
 - `EXOTEL_CALLER_ID=<your_exophone_or_verified_cli>`
 - `EXOTEL_MAX_CALL_DURATION_SECONDS=60`
+- `EXOTEL_WAIT_URL=<public_audio_url_or_exotel_voice_url>`
+- `EXOTEL_START_PLAYBACK_VALUE=<public_audio_url_or_provider_value>`
+- `EXOTEL_START_PLAYBACK_TO=both` (or `callee`)
 - `PUBLIC_WEBHOOK_BASE_URL=https://<your-ngrok-domain>`
+
+Direct upload option:
+- Open Settings page -> `Exotel Wait Audio`
+- Upload `mp3/wav/ogg/m4a`
+- Backend hosts it under `/media/...` and uses it as Exotel `WaitUrl`
 
 ## Make a Test Call
 ```bash
