@@ -75,7 +75,7 @@ export default function LoginPage() {
                             <Phone sx={{ fontSize: 30, color: '#fff' }} />
                         </Box>
                         <Typography variant="h5" fontWeight={800} sx={{ color: '#0142a2', letterSpacing: '-0.02em' }}>
-                            PowerDialer
+                            iCompaas Power Dialer
                         </Typography>
                         <Typography color="text.secondary" variant="body2" mt={0.5}>
                             Sales Automation Platform

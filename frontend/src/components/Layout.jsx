@@ -76,20 +76,17 @@ export default function Layout() {
                 }}>
                     <Box sx={{
                         width: 34, height: 34,
-                        borderRadius: 2,
-                        background: 'linear-gradient(135deg, #0142a2, #1a6ed8)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         flexShrink: 0,
-                        boxShadow: '0 2px 8px rgba(1,66,162,0.5)',
                     }}>
-                        <Phone sx={{ fontSize: 17, color: '#fff' }} />
+                        <img src="/favicon.svg" alt="Logo" style={{ width: '100%', height: '100%' }} />
                     </Box>
                     {open && (
                         <Box>
                             <Typography sx={{ fontSize: '0.95rem', fontWeight: 700, color: '#ffffff', lineHeight: 1.1, letterSpacing: '-0.01em' }}>
-                                PowerDialer
+                                iCompaas Power Dialer
                             </Typography>
-                            <Typography sx={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.45)', lineHeight: 1 }}>
+                            <Typography sx={{ fontSize: '0.65rem', color: 'rgba(245, 238, 238, 0.97)', lineHeight: 1 }}>
                                 Sales Platform
                             </Typography>
                         </Box>
