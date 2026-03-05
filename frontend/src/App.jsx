@@ -14,6 +14,7 @@ import DialPage from './pages/DialPage';
 import CallLogsPage from './pages/CallLogsPage';
 import SettingsPage from './pages/SettingsPage';
 import SalesfloorPage from './pages/SalesfloorPage';
+import SdrsPage from './pages/SdrsPage';
 
 const darkTheme = createTheme({
   palette: {
@@ -102,6 +103,7 @@ function App() {
               <Route path="campaigns/new" element={<CampaignCreatePage />} />
               <Route path="campaigns/:id" element={<CampaignDetailPage />} />
               <Route path="salesfloor" element={<SalesfloorPage />} />
+              <Route path="sdrs" element={<SdrsPage />} />
               <Route path="contacts" element={<ContactsPage />} />
               <Route path="call-logs" element={<CallLogsPage />} />
               <Route path="settings" element={<SettingsPage />} />

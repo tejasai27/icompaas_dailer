@@ -8,7 +8,7 @@ import {
 import {
     Dashboard, Campaign, Headphones, Contacts, Phone, Dialpad,
     History, Settings, Menu, ChevronLeft, PowerSettingsNew,
-    Notifications, Circle
+    Notifications, Circle, People
 } from '@mui/icons-material';
 import useAuth from '../context/useAuth';
 
@@ -19,6 +19,7 @@ const nav = [
     { label: 'Dial', icon: <Dialpad />, path: '/dial' },
     { label: 'Campaigns', icon: <Campaign />, path: '/campaigns' },
     { label: 'Salesfloor', icon: <Headphones />, path: '/salesfloor' },
+    { label: 'SDRs', icon: <People />, path: '/sdrs' },
     { label: 'Contacts', icon: <Contacts />, path: '/contacts' },
     { label: 'Call Logs', icon: <History />, path: '/call-logs' },
     { label: 'Settings', icon: <Settings />, path: '/settings' },

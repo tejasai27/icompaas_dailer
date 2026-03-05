@@ -10,8 +10,9 @@ from urllib.parse import parse_qsl
 from uuid import UUID, uuid4
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Max, Q
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpRequest, JsonResponse
@@ -59,6 +60,135 @@ def _active_call_not_ended_filter() -> Q:
     return Q(ended_at__isnull=True) | Q(ended_at__lt=cutoff)
 
 
+def _serialize_agent(agent: AgentProfile) -> dict:
+    user = getattr(agent, "user", None)
+    username = ""
+    email = ""
+    if user:
+        username_field = getattr(user, "USERNAME_FIELD", "username")
+        username = str(getattr(user, username_field, "") or "")
+        email = str(getattr(user, "email", "") or "")
+
+    return {
+        "id": agent.id,
+        "display_name": agent.display_name,
+        "status": agent.status,
+        "user_id": agent.user_id,
+        "username": username,
+        "email": email,
+    }
+
+
+def _serialize_lead_row(lead: Lead) -> dict:
+    dial_state = getattr(lead, "dial_state", None)
+    status = dial_state.last_outcome if dial_state and dial_state.last_outcome else "pending"
+    retry_count = dial_state.attempt_count if dial_state else 0
+    last_called_at = dial_state.last_attempt_at.isoformat() if dial_state and dial_state.last_attempt_at else None
+    metadata = lead.metadata if isinstance(lead.metadata, dict) else {}
+    campaign_settings = metadata.get("campaign_settings")
+    if not isinstance(campaign_settings, dict):
+        campaign_settings = {}
+
+    return {
+        "id": lead.id,
+        "name": lead.full_name,
+        "full_name": lead.full_name,
+        "phone": lead.phone_e164,
+        "phone_e164": lead.phone_e164,
+        "email": lead.email,
+        "company": lead.company_name,
+        "company_name": lead.company_name,
+        "status": status,
+        "retry_count": retry_count,
+        "last_called_at": last_called_at,
+        "owner_hint": lead.owner_hint,
+        "timezone": lead.timezone,
+        "external_id": lead.external_id,
+        "campaign_name": str(metadata.get("campaign_name") or ""),
+        "campaign_settings": campaign_settings,
+    }
+
+
+def _bulk_delete_lead_ids(lead_ids: list[int]) -> dict:
+    if not lead_ids:
+        return {
+            "requested": 0,
+            "deleted": 0,
+            "deleted_ids": [],
+            "deleted_rows": [],
+            "blocked_in_progress": [],
+            "blocked_with_history": [],
+            "missing_ids": [],
+        }
+
+    leads = list(Lead.objects.filter(id__in=lead_ids).only("id", "full_name"))
+    lead_name_by_id = {lead.id: lead.full_name for lead in leads}
+    existing_ids = set(lead_name_by_id.keys())
+    missing_ids = [lead_id for lead_id in lead_ids if lead_id not in existing_ids]
+
+    active_statuses = [
+        CallStatus.QUEUED,
+        CallStatus.DIALING,
+        CallStatus.RINGING,
+        CallStatus.BRIDGED,
+        CallStatus.HUMAN_DETECTED,
+        CallStatus.MACHINE_DETECTED,
+    ]
+    active_call_ids = set(
+        CallSession.objects.filter(lead_id__in=existing_ids)
+        .filter(_active_call_not_ended_filter())
+        .filter(status__in=active_statuses)
+        .values_list("lead_id", flat=True)
+    )
+    call_history_ids = set(
+        CallSession.objects.filter(lead_id__in=existing_ids).values_list("lead_id", flat=True)
+    )
+
+    blocked_in_progress = [lead_id for lead_id in lead_ids if lead_id in active_call_ids]
+    blocked_with_history = [
+        lead_id
+        for lead_id in lead_ids
+        if lead_id in existing_ids and lead_id not in active_call_ids and lead_id in call_history_ids
+    ]
+    deletable_ids = [
+        lead_id
+        for lead_id in lead_ids
+        if lead_id in existing_ids and lead_id not in active_call_ids and lead_id not in call_history_ids
+    ]
+
+    if deletable_ids:
+        Lead.objects.filter(id__in=deletable_ids).delete()
+
+    return {
+        "requested": len(lead_ids),
+        "deleted": len(deletable_ids),
+        "deleted_ids": deletable_ids,
+        "deleted_rows": [{"id": lead_id, "name": str(lead_name_by_id.get(lead_id) or "")} for lead_id in deletable_ids],
+        "blocked_in_progress": blocked_in_progress,
+        "blocked_with_history": blocked_with_history,
+        "missing_ids": missing_ids,
+    }
+
+
+def _username_base_from_text(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+    return cleaned[:40] if cleaned else "sdr"
+
+
+def _build_unique_username(User: type, base: str, exclude_user_id: int | None = None) -> str:
+    username_field = str(getattr(User, "USERNAME_FIELD", "username"))
+    candidate = _username_base_from_text(base)
+    suffix = 1
+    while True:
+        queryset = User.objects.filter(**{username_field: candidate})
+        if exclude_user_id:
+            queryset = queryset.exclude(id=exclude_user_id)
+        if not queryset.exists():
+            return candidate
+        candidate = f"{_username_base_from_text(base)}_{suffix}"
+        suffix += 1
+
+
 @require_GET
 def health(request: HttpRequest) -> JsonResponse:
     db_ok = True
@@ -87,17 +217,54 @@ def list_agents(request: HttpRequest) -> JsonResponse:
     agents = AgentProfile.objects.select_related("user").order_by("id")
     return JsonResponse(
         {
-            "agents": [
-                {
-                    "id": agent.id,
-                    "display_name": agent.display_name,
-                    "status": agent.status,
-                    "user_id": agent.user_id,
-                }
-                for agent in agents
-            ]
+            "agents": [_serialize_agent(agent) for agent in agents]
         }
     )
+
+
+@csrf_exempt
+@require_POST
+def create_agent(request: HttpRequest) -> JsonResponse:
+    payload = _load_json_body(request)
+    display_name = str(payload.get("display_name") or payload.get("name") or "").strip()
+    if not display_name:
+        return JsonResponse({"error": "display_name is required"}, status=400)
+
+    status = str(payload.get("status") or AgentStatus.OFFLINE).strip().lower()
+    valid_statuses = {choice[0] for choice in AgentProfile._meta.get_field("status").choices}
+    if status not in valid_statuses:
+        return JsonResponse({"error": "invalid status"}, status=400)
+
+    email = str(payload.get("email") or "").strip()
+    username_input = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "").strip()
+
+    User = get_user_model()
+    base_username = username_input or _username_base_from_text(email.split("@")[0] if "@" in email else display_name)
+    username = _build_unique_username(User, base_username)
+
+    user_kwargs: dict[str, object] = {User.USERNAME_FIELD: username}
+    if hasattr(User, "email"):
+        user_kwargs["email"] = email
+    if hasattr(User, "first_name"):
+        user_kwargs["first_name"] = display_name
+
+    try:
+        if password:
+            user = User.objects.create_user(password=password, **user_kwargs)
+        else:
+            user = User.objects.create_user(password=None, **user_kwargs)
+            user.set_unusable_password()
+            user.save(update_fields=["password"])
+    except IntegrityError:
+        return JsonResponse({"error": "user_creation_failed"}, status=400)
+
+    agent = AgentProfile.objects.create(
+        user=user,
+        display_name=display_name,
+        status=status,
+    )
+    return JsonResponse({"ok": True, "agent": _serialize_agent(agent)}, status=201)
 
 
 @csrf_exempt
@@ -113,6 +280,95 @@ def update_agent_status(request: HttpRequest, agent_id: int) -> JsonResponse:
     agent.status = status
     agent.save(update_fields=["status", "last_state_change"])
     return JsonResponse({"agent_id": agent.id, "status": agent.status})
+
+
+@csrf_exempt
+@require_POST
+def update_agent(request: HttpRequest, agent_id: int) -> JsonResponse:
+    payload = _load_json_body(request)
+    agent = get_object_or_404(AgentProfile.objects.select_related("user"), id=agent_id)
+    user = agent.user
+
+    display_name = str(payload.get("display_name") or "").strip()
+    status = str(payload.get("status") or "").strip().lower()
+    email = str(payload.get("email") or "").strip()
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "").strip()
+
+    if status:
+        valid_statuses = {choice[0] for choice in AgentProfile._meta.get_field("status").choices}
+        if status not in valid_statuses:
+            return JsonResponse({"error": "invalid status"}, status=400)
+
+    User = get_user_model()
+
+    with transaction.atomic():
+        agent = AgentProfile.objects.select_related("user").select_for_update().get(id=agent.id)
+        user = agent.user
+
+        agent_update_fields: list[str] = []
+        if display_name and display_name != agent.display_name:
+            agent.display_name = display_name
+            agent_update_fields.append("display_name")
+
+        if status and status != agent.status:
+            agent.status = status
+            agent_update_fields.extend(["status", "last_state_change"])
+
+        if agent_update_fields:
+            agent.save(update_fields=list(dict.fromkeys(agent_update_fields)))
+
+        user_update_fields: list[str] = []
+        if hasattr(user, "email") and email and email != getattr(user, "email", ""):
+            user.email = email
+            user_update_fields.append("email")
+
+        if username:
+            current_username = str(getattr(user, User.USERNAME_FIELD, "") or "")
+            if username != current_username:
+                safe_username = _build_unique_username(User, username, exclude_user_id=user.id)
+                setattr(user, User.USERNAME_FIELD, safe_username)
+                user_update_fields.append(User.USERNAME_FIELD)
+
+        if password:
+            user.set_password(password)
+            user_update_fields.append("password")
+
+        if user_update_fields:
+            user.save(update_fields=list(dict.fromkeys(user_update_fields)))
+
+    agent.refresh_from_db()
+    return JsonResponse({"ok": True, "agent": _serialize_agent(agent)})
+
+
+@csrf_exempt
+@require_POST
+def delete_agent(request: HttpRequest, agent_id: int) -> JsonResponse:
+    agent = get_object_or_404(AgentProfile, id=agent_id)
+    active_call_exists = CallSession.objects.filter(
+        agent_id=agent.id,
+    ).filter(
+        _active_call_not_ended_filter(),
+    ).filter(
+        status__in=[
+            CallStatus.QUEUED,
+            CallStatus.DIALING,
+            CallStatus.RINGING,
+            CallStatus.BRIDGED,
+            CallStatus.HUMAN_DETECTED,
+            CallStatus.MACHINE_DETECTED,
+        ],
+    ).exists()
+    if active_call_exists:
+        return JsonResponse(
+            {"error": "agent_call_in_progress", "message": "This SDR has an active call"},
+            status=409,
+        )
+
+    agent_name = agent.display_name
+    user_id = agent.user_id
+    agent.delete()
+    return JsonResponse({"ok": True, "deleted": True, "agent_id": agent_id, "display_name": agent_name, "user_id": user_id})
 
 
 @csrf_exempt
@@ -212,6 +468,36 @@ def create_campaign(request: HttpRequest) -> JsonResponse:
 def get_campaign(request: HttpRequest, campaign_id: int) -> JsonResponse:
     campaign = get_object_or_404(Campaign.objects.select_related("assigned_agent"), id=campaign_id)
     return JsonResponse(_serialize_campaign(campaign))
+
+
+@csrf_exempt
+@require_POST
+def delete_campaign(request: HttpRequest, campaign_id: int) -> JsonResponse:
+    campaign = get_object_or_404(Campaign, id=campaign_id)
+    active_call_exists = CallSession.objects.filter(
+        campaign_id=campaign.id,
+    ).filter(
+        _active_call_not_ended_filter(),
+    ).filter(
+        status__in=[
+            CallStatus.QUEUED,
+            CallStatus.DIALING,
+            CallStatus.RINGING,
+            CallStatus.BRIDGED,
+            CallStatus.HUMAN_DETECTED,
+            CallStatus.MACHINE_DETECTED,
+        ],
+    ).exists()
+    if active_call_exists:
+        return JsonResponse(
+            {"error": "campaign_call_in_progress", "message": "Active call in progress for this campaign"},
+            status=409,
+        )
+
+    campaign_name = campaign.name
+    campaign.delete()
+    logger.info("campaign_deleted campaign_id=%s campaign_name=%s", campaign_id, campaign_name)
+    return JsonResponse({"ok": True, "deleted": True, "campaign_id": campaign_id, "campaign_name": campaign_name})
 
 
 @require_GET
@@ -680,37 +966,7 @@ def list_leads(request: HttpRequest) -> JsonResponse:
     offset = (page - 1) * page_size
     leads = list(queryset[offset : offset + page_size])
 
-    results = []
-    for lead in leads:
-        dial_state = getattr(lead, "dial_state", None)
-        status = dial_state.last_outcome if dial_state and dial_state.last_outcome else "pending"
-        retry_count = dial_state.attempt_count if dial_state else 0
-        last_called_at = dial_state.last_attempt_at.isoformat() if dial_state and dial_state.last_attempt_at else None
-        metadata = lead.metadata if isinstance(lead.metadata, dict) else {}
-        campaign_settings = metadata.get("campaign_settings")
-        if not isinstance(campaign_settings, dict):
-            campaign_settings = {}
-
-        results.append(
-            {
-                "id": lead.id,
-                "name": lead.full_name,
-                "full_name": lead.full_name,
-                "phone": lead.phone_e164,
-                "phone_e164": lead.phone_e164,
-                "email": lead.email,
-                "company": lead.company_name,
-                "company_name": lead.company_name,
-                "status": status,
-                "retry_count": retry_count,
-                "last_called_at": last_called_at,
-                "owner_hint": lead.owner_hint,
-                "timezone": lead.timezone,
-                "external_id": lead.external_id,
-                "campaign_name": str(metadata.get("campaign_name") or ""),
-                "campaign_settings": campaign_settings,
-            }
-        )
+    results = [_serialize_lead_row(lead) for lead in leads]
 
     return JsonResponse({"count": count, "page": page, "page_size": page_size, "results": results})
 
@@ -719,6 +975,141 @@ def list_leads(request: HttpRequest) -> JsonResponse:
 def list_contacts(request: HttpRequest) -> JsonResponse:
     # Alias kept for frontend pages that still use /contacts/.
     return list_leads(request)
+
+
+@csrf_exempt
+@require_POST
+def update_lead(request: HttpRequest, lead_id: int) -> JsonResponse:
+    lead = get_object_or_404(Lead.objects.select_related("dial_state"), id=lead_id)
+
+    active_call_exists = CallSession.objects.filter(
+        lead_id=lead.id,
+    ).filter(
+        _active_call_not_ended_filter(),
+    ).filter(
+        status__in=[
+            CallStatus.QUEUED,
+            CallStatus.DIALING,
+            CallStatus.RINGING,
+            CallStatus.BRIDGED,
+            CallStatus.HUMAN_DETECTED,
+            CallStatus.MACHINE_DETECTED,
+        ],
+    ).exists()
+    if active_call_exists:
+        return JsonResponse({"error": "contact_call_in_progress"}, status=409)
+
+    payload = _load_json_body(request)
+    update_fields: list[str] = []
+
+    full_name = str(payload.get("full_name") or "").strip()
+    if full_name and full_name != lead.full_name:
+        lead.full_name = full_name
+        update_fields.append("full_name")
+
+    raw_phone = payload.get("phone_e164")
+    if raw_phone not in (None, ""):
+        normalized_phone = _normalize_phone(raw_phone)
+        if not normalized_phone:
+            return JsonResponse({"error": "invalid_phone"}, status=400)
+        if normalized_phone != lead.phone_e164:
+            duplicate_exists = Lead.objects.filter(phone_e164=normalized_phone).exclude(id=lead.id).exists()
+            if duplicate_exists:
+                return JsonResponse({"error": "phone_already_exists"}, status=409)
+            lead.phone_e164 = normalized_phone
+            update_fields.append("phone_e164")
+
+    for field_name in ("email", "company_name", "timezone", "owner_hint", "external_id"):
+        if field_name in payload:
+            value = str(payload.get(field_name) or "").strip()
+            if getattr(lead, field_name) != value:
+                setattr(lead, field_name, value)
+                update_fields.append(field_name)
+
+    if update_fields:
+        lead.save(update_fields=list(dict.fromkeys(update_fields)))
+        lead.refresh_from_db()
+
+    return JsonResponse({"ok": True, "contact": _serialize_lead_row(lead)})
+
+
+@csrf_exempt
+@require_POST
+def delete_lead(request: HttpRequest, lead_id: int) -> JsonResponse:
+    result = _bulk_delete_lead_ids([lead_id])
+    if lead_id in result.get("blocked_in_progress", []):
+        return JsonResponse({"error": "contact_call_in_progress"}, status=409)
+    if lead_id in result.get("blocked_with_history", []):
+        return JsonResponse({"error": "contact_has_call_history"}, status=409)
+    if lead_id in result.get("missing_ids", []):
+        return JsonResponse({"error": "contact_not_found"}, status=404)
+
+    deleted_rows = result.get("deleted_rows") or []
+    contact_name = ""
+    if deleted_rows:
+        contact_name = str((deleted_rows[0] or {}).get("name") or "")
+    return JsonResponse({"ok": True, "deleted": True, "lead_id": lead_id, "contact_name": contact_name})
+
+
+@csrf_exempt
+@require_POST
+def bulk_delete_leads(request: HttpRequest) -> JsonResponse:
+    payload = _load_json_body(request)
+    lead_ids_payload = payload.get("lead_ids")
+    if not isinstance(lead_ids_payload, list) or not lead_ids_payload:
+        return JsonResponse({"error": "lead_ids list is required"}, status=400)
+
+    lead_ids: list[int] = []
+    for raw_id in lead_ids_payload:
+        lead_id = _parse_positive_int(raw_id, 0)
+        if lead_id > 0 and lead_id not in lead_ids:
+            lead_ids.append(lead_id)
+
+    if not lead_ids:
+        return JsonResponse({"error": "no_valid_lead_ids"}, status=400)
+
+    result = _bulk_delete_lead_ids(lead_ids)
+    return JsonResponse({"ok": True, **result})
+
+
+@csrf_exempt
+@require_POST
+def bulk_delete_filtered_leads(request: HttpRequest) -> JsonResponse:
+    payload = _load_json_body(request)
+    search = str(payload.get("search") or "").strip()
+    campaign_filter = str(payload.get("campaign_id") or payload.get("campaign") or "").strip()
+    force_all = _parse_bool(payload.get("force_all"), False)
+
+    if not search and not campaign_filter and not force_all:
+        return JsonResponse({"error": "filter_required"}, status=400)
+
+    queryset = Lead.objects.order_by("-id")
+    if search:
+        queryset = queryset.filter(
+            Q(full_name__icontains=search)
+            | Q(phone_e164__icontains=search)
+            | Q(company_name__icontains=search)
+            | Q(email__icontains=search)
+        )
+    if campaign_filter:
+        if campaign_filter.isdigit():
+            queryset = queryset.filter(campaign_links__campaign_id=int(campaign_filter))
+        else:
+            queryset = queryset.filter(metadata__campaign_name=campaign_filter)
+
+    lead_ids = list(queryset.distinct().values_list("id", flat=True))
+    result = _bulk_delete_lead_ids(lead_ids)
+    return JsonResponse(
+        {
+            "ok": True,
+            "filter": {
+                "search": search,
+                "campaign": campaign_filter,
+                "force_all": force_all,
+            },
+            **result,
+        }
+    )
 
 
 @csrf_exempt

@@ -6,16 +6,23 @@ import {
     CardContent,
     Chip,
     Grid,
+    IconButton,
     LinearProgress,
     Skeleton,
+    ToggleButton,
+    ToggleButtonGroup,
+    Tooltip,
     Typography,
 } from '@mui/material';
 import {
     Add,
     Campaign,
+    DeleteOutline,
     Dialpad,
     Pause,
     PlayArrow,
+    ViewAgenda,
+    ViewModule,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
@@ -34,25 +41,9 @@ const MODE_LABELS = {
     dynamic: '🔀 Dynamic',
 };
 
-function CampaignCard({ campaign, onAction }) {
+function CampaignCard({ campaign, onAction, onDelete, deleting }) {
     const navigate = useNavigate();
     const statusCfg = STATUS_COLORS[campaign.status] || STATUS_COLORS.draft;
-
-    const runAction = async (action) => {
-        try {
-            await api.post(`/campaigns/${campaign.id}/${action}/`);
-            const actionLabel = {
-                start: 'started',
-                resume: 'resumed',
-                pause: 'paused',
-                stop: 'stopped',
-            }[action] || 'updated';
-            toast.success(`Campaign ${actionLabel}`);
-            onAction();
-        } catch (error) {
-            toast.error(error?.response?.data?.error || `Failed to ${action}`);
-        }
-    };
 
     return (
         <Card
@@ -142,13 +133,13 @@ function CampaignCard({ campaign, onAction }) {
 
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     {campaign.status === 'active' ? (
-                        <Button size="small" variant="outlined" startIcon={<Pause />} onClick={() => runAction('pause')}
+                        <Button size="small" variant="outlined" startIcon={<Pause />} onClick={() => onAction(campaign, 'pause')}
                             sx={{ borderColor: '#f59e0b', color: '#f59e0b', flex: 1 }}>
                             Pause
                         </Button>
                     ) : campaign.status === 'draft' || campaign.status === 'paused' ? (
                         <Button size="small" variant="contained" startIcon={<PlayArrow />}
-                            onClick={() => runAction(campaign.status === 'draft' ? 'start' : 'resume')}
+                            onClick={() => onAction(campaign, campaign.status === 'draft' ? 'start' : 'resume')}
                             sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)', flex: 1 }}>
                             {campaign.status === 'draft' ? 'Start' : 'Resume'}
                         </Button>
@@ -171,6 +162,126 @@ function CampaignCard({ campaign, onAction }) {
                     >
                         Details
                     </Button>
+                    <Button
+                        size="small"
+                        color="error"
+                        variant="text"
+                        startIcon={<DeleteOutline />}
+                        onClick={() => onDelete(campaign)}
+                        disabled={deleting}
+                    >
+                        Delete
+                    </Button>
+                </Box>
+            </CardContent>
+        </Card>
+    );
+}
+
+function CampaignRow({ campaign, onAction, onDelete, deleting }) {
+    const navigate = useNavigate();
+    const statusCfg = STATUS_COLORS[campaign.status] || STATUS_COLORS.draft;
+
+    return (
+        <Card
+            sx={{
+                border: campaign.status === 'active'
+                    ? '1px solid rgba(16,185,129,0.3)'
+                    : '1px solid rgba(99,102,241,0.12)',
+            }}
+        >
+            <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                    <Box sx={{ minWidth: 220, flex: 1 }}>
+                        <Typography
+                            fontWeight={700}
+                            noWrap
+                            onClick={() => navigate(`/campaigns/${campaign.id}`)}
+                            sx={{ cursor: 'pointer', '&:hover': { color: '#6366f1' } }}
+                        >
+                            {campaign.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" noWrap>
+                            Agent: {campaign.assigned_agent_name || 'Unassigned'}
+                        </Typography>
+                    </Box>
+
+                    <Chip
+                        label={statusCfg.label}
+                        size="small"
+                        sx={{ bgcolor: statusCfg.bg, color: statusCfg.text, height: 22, fontSize: '0.72rem' }}
+                    />
+                    <Chip
+                        label={MODE_LABELS[campaign.dialing_mode] || campaign.dialing_mode}
+                        size="small"
+                        variant="outlined"
+                        sx={{ height: 22, fontSize: '0.72rem', borderColor: 'rgba(99,102,241,0.3)', color: '#818cf8' }}
+                    />
+
+                    <Box sx={{ width: 180 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.4 }}>
+                            <Typography variant="caption" color="text.secondary">
+                                {campaign.progress_percentage}%
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                                {campaign.dialed_contacts}/{campaign.total_contacts}
+                            </Typography>
+                        </Box>
+                        <LinearProgress
+                            value={campaign.progress_percentage}
+                            variant="determinate"
+                            sx={{
+                                height: 6,
+                                borderRadius: 3,
+                                bgcolor: 'rgba(99,102,241,0.1)',
+                                '& .MuiLinearProgress-bar': {
+                                    bgcolor: campaign.status === 'active' ? '#10b981' : '#6366f1',
+                                    borderRadius: 3,
+                                },
+                            }}
+                        />
+                    </Box>
+
+                    <Typography variant="caption" sx={{ minWidth: 90, color: '#10b981' }}>
+                        Connected: {campaign.connected_calls}
+                    </Typography>
+                    <Typography variant="caption" sx={{ minWidth: 75, color: '#f59e0b' }}>
+                        Rate: {campaign.connect_rate}%
+                    </Typography>
+
+                    {campaign.status === 'active' ? (
+                        <Button size="small" variant="outlined" startIcon={<Pause />} onClick={() => onAction(campaign, 'pause')}
+                            sx={{ borderColor: '#f59e0b', color: '#f59e0b' }}>
+                            Pause
+                        </Button>
+                    ) : campaign.status === 'draft' || campaign.status === 'paused' ? (
+                        <Button size="small" variant="contained" startIcon={<PlayArrow />}
+                            onClick={() => onAction(campaign, campaign.status === 'draft' ? 'start' : 'resume')}
+                            sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}>
+                            {campaign.status === 'draft' ? 'Start' : 'Resume'}
+                        </Button>
+                    ) : null}
+
+                    <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<Dialpad />}
+                        onClick={() => navigate(`/dial?campaign_id=${campaign.id}`)}
+                        sx={{ borderColor: 'rgba(99,102,241,0.5)', color: '#818cf8' }}
+                    >
+                        Dialer
+                    </Button>
+                    <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => navigate(`/campaigns/${campaign.id}`)}
+                        sx={{ color: '#94a3b8' }}
+                    >
+                        Details
+                    </Button>
+                    <IconButton size="small" color="error" onClick={() => onDelete(campaign)} disabled={deleting}>
+                        <DeleteOutline fontSize="small" />
+                    </IconButton>
                 </Box>
             </CardContent>
         </Card>
@@ -181,6 +292,8 @@ export default function CampaignsPage() {
     const [campaigns, setCampaigns] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all');
+    const [viewMode, setViewMode] = useState(() => localStorage.getItem('campaigns_view_mode') || 'grid');
+    const [deletingCampaignId, setDeletingCampaignId] = useState(null);
     const navigate = useNavigate();
 
     const fetchCampaigns = async ({ silent = false } = {}) => {
@@ -210,6 +323,10 @@ export default function CampaignsPage() {
     }, [filter]);
 
     useEffect(() => {
+        localStorage.setItem('campaigns_view_mode', viewMode);
+    }, [viewMode]);
+
+    useEffect(() => {
         const hasActive = campaigns.some((campaign) => campaign.status === 'active');
         if (!hasActive) return undefined;
 
@@ -227,6 +344,43 @@ export default function CampaignsPage() {
         return () => clearInterval(timer);
     }, [campaigns]);
 
+    const handleCampaignAction = async (campaign, action) => {
+        try {
+            await api.post(`/campaigns/${campaign.id}/${action}/`);
+            const actionLabel = {
+                start: 'started',
+                resume: 'resumed',
+                pause: 'paused',
+                stop: 'stopped',
+            }[action] || 'updated';
+            toast.success(`Campaign ${actionLabel}`);
+            fetchCampaigns({ silent: true });
+        } catch (error) {
+            toast.error(error?.response?.data?.error || `Failed to ${action}`);
+        }
+    };
+
+    const handleDeleteCampaign = async (campaign) => {
+        const ok = window.confirm(`Delete campaign "${campaign.name}"?`);
+        if (!ok) return;
+
+        setDeletingCampaignId(campaign.id);
+        try {
+            await api.post(`/campaigns/${campaign.id}/delete/`);
+            toast.success('Campaign deleted');
+            fetchCampaigns({ silent: true });
+        } catch (error) {
+            const code = error?.response?.data?.error;
+            if (code === 'campaign_call_in_progress') {
+                toast.error('Cannot delete while call is in progress. Pause or stop first.');
+            } else {
+                toast.error(code || 'Failed to delete campaign');
+            }
+        } finally {
+            setDeletingCampaignId(null);
+        }
+    };
+
     const filters = ['all', 'active', 'paused', 'draft', 'completed'];
 
     return (
@@ -236,14 +390,42 @@ export default function CampaignsPage() {
                     <Typography variant="h4" fontWeight={700}>Campaigns</Typography>
                     <Typography color="text.secondary" variant="body2">Queue-based outbound campaign control</Typography>
                 </Box>
-                <Button
-                    variant="contained"
-                    startIcon={<Add />}
-                    onClick={() => navigate('/campaigns/new')}
-                    sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
-                >
-                    Create Campaign
-                </Button>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <Tooltip title="Card Grid">
+                        <ToggleButtonGroup
+                            size="small"
+                            value={viewMode}
+                            exclusive
+                            onChange={(_event, next) => next && setViewMode(next)}
+                            sx={{
+                                '& .MuiToggleButton-root': {
+                                    color: '#94a3b8',
+                                    borderColor: 'rgba(99,102,241,0.25)',
+                                    px: 1.2,
+                                },
+                                '& .Mui-selected': {
+                                    bgcolor: 'rgba(99,102,241,0.18)',
+                                    color: '#818cf8',
+                                },
+                            }}
+                        >
+                            <ToggleButton value="grid" aria-label="grid view">
+                                <ViewModule fontSize="small" />
+                            </ToggleButton>
+                            <ToggleButton value="list" aria-label="single-line view">
+                                <ViewAgenda fontSize="small" />
+                            </ToggleButton>
+                        </ToggleButtonGroup>
+                    </Tooltip>
+                    <Button
+                        variant="contained"
+                        startIcon={<Add />}
+                        onClick={() => navigate('/campaigns/new')}
+                        sx={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                    >
+                        Create Campaign
+                    </Button>
+                </Box>
             </Box>
 
             <Box sx={{ display: 'flex', gap: 1, mb: 3, flexWrap: 'wrap' }}>
@@ -286,14 +468,31 @@ export default function CampaignsPage() {
                         </Button>
                     </CardContent>
                 </Card>
-            ) : (
+            ) : viewMode === 'grid' ? (
                 <Grid container spacing={2}>
                     {campaigns.map((campaign) => (
                         <Grid item xs={12} sm={6} md={4} key={campaign.id}>
-                            <CampaignCard campaign={campaign} onAction={fetchCampaigns} />
+                            <CampaignCard
+                                campaign={campaign}
+                                onAction={handleCampaignAction}
+                                onDelete={handleDeleteCampaign}
+                                deleting={deletingCampaignId === campaign.id}
+                            />
                         </Grid>
                     ))}
                 </Grid>
+            ) : (
+                <Box sx={{ display: 'grid', gap: 1.25 }}>
+                    {campaigns.map((campaign) => (
+                        <CampaignRow
+                            key={campaign.id}
+                            campaign={campaign}
+                            onAction={handleCampaignAction}
+                            onDelete={handleDeleteCampaign}
+                            deleting={deletingCampaignId === campaign.id}
+                        />
+                    ))}
+                </Box>
             )}
         </Box>
     );
