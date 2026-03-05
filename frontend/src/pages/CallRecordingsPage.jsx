@@ -165,7 +165,7 @@ export default function CallRecordingsPage() {
                         </Grid>
                     </Grid>
                     <Alert severity="info" sx={{ mt: 2 }}>
-                        After upload, click Transcript on any row to generate and open synced transcript view.
+                        Transcription runs automatically when recording audio is available. Use Transcript to open the synced view.
                     </Alert>
                 </CardContent>
             </Card>

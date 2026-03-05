@@ -16,6 +16,7 @@ import CallLogsPage from './pages/CallLogsPage';
 import CallRecordingsPage from './pages/CallRecordingsPage';
 import RecordingTranscriptPage from './pages/RecordingTranscriptPage';
 import SettingsPage from './pages/SettingsPage';
+import IntegrationsPage from './pages/IntegrationsPage';
 import SalesfloorPage from './pages/SalesfloorPage';
 import SdrsPage from './pages/SdrsPage';
 
@@ -112,6 +113,7 @@ function App() {
               <Route path="call-logs" element={<CallLogsPage />} />
               <Route path="recordings" element={<CallRecordingsPage />} />
               <Route path="recordings/:recordingPublicId/transcript" element={<RecordingTranscriptPage />} />
+              <Route path="integrations" element={<IntegrationsPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

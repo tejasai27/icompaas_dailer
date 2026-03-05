@@ -208,6 +208,9 @@ export default function CallLogsPage() {
                                 { label: 'Campaign', value: selected.campaign_name },
                                 { label: 'Outcome', value: selected.call_outcome || '-' },
                                 { label: 'Date', value: new Date(selected.initiated_at).toLocaleString() },
+                                { label: 'Deal ID', value: selected.deal_id || '-' },
+                                { label: 'Deal Name', value: selected.deal_name || '-' },
+                                { label: 'HubSpot Sync', value: selected.hubspot_sync_status || '-' },
                             ].map(({ label, value }) => (
                                 <Grid item xs={6} key={label}>
                                     <Typography variant="caption" color="text.secondary">{label}</Typography>

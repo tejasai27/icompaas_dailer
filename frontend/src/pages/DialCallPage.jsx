@@ -58,6 +58,8 @@ export default function DialCallPage() {
     const [savingDisposition, setSavingDisposition] = useState(false);
     const [outcome, setOutcome] = useState('follow_up');
     const [notes, setNotes] = useState('');
+    const [dealId, setDealId] = useState('');
+    const [dealName, setDealName] = useState('');
     const [muted, setMuted] = useState(false);
     const [speakerOn, setSpeakerOn] = useState(true);
     const [keypadOpen, setKeypadOpen] = useState(false);
@@ -65,7 +67,7 @@ export default function DialCallPage() {
     const [terminalAtMs, setTerminalAtMs] = useState(null);
     const [hasEditedDisposition, setHasEditedDisposition] = useState(false);
     const [autosaveState, setAutosaveState] = useState('idle');
-    const lastSavedRef = useRef({ outcome: '', notes: '' });
+    const lastSavedRef = useRef({ outcome: '', notes: '', dealId: '', dealName: '' });
 
     const internalStatus = String(call?.internal_status || '').toLowerCase();
     const displayStatus = String(call?.status || '').toLowerCase();
@@ -105,14 +107,20 @@ export default function DialCallPage() {
             const serverOutcomeRaw = String(current?.call_outcome || '').trim();
             const serverOutcome = serverOutcomeRaw || 'follow_up';
             const serverNotes = typeof current?.agent_notes === 'string' ? current.agent_notes : '';
+            const serverDealId = typeof current?.deal_id === 'string' ? current.deal_id : '';
+            const serverDealName = typeof current?.deal_name === 'string' ? current.deal_name : '';
             lastSavedRef.current = {
                 outcome: serverOutcome,
                 notes: serverNotes,
+                dealId: serverDealId,
+                dealName: serverDealName,
             };
             if (!hasEditedDisposition) {
                 setOutcome(serverOutcome);
                 setNotes(serverNotes);
-                setAutosaveState(serverOutcomeRaw || serverNotes ? 'saved' : 'idle');
+                setDealId(serverDealId);
+                setDealName(serverDealName);
+                setAutosaveState(serverOutcomeRaw || serverNotes || serverDealId || serverDealName ? 'saved' : 'idle');
             }
         } catch (error) {
             toast.error(error.message || 'Failed to load call status');
@@ -181,12 +189,14 @@ export default function DialCallPage() {
                 body: JSON.stringify({
                     outcome,
                     notes,
+                    deal_id: dealId,
+                    deal_name: dealName,
                 }),
             });
             if (data?.call) {
                 setCall(data.call);
             }
-            lastSavedRef.current = { outcome, notes };
+            lastSavedRef.current = { outcome, notes, dealId, dealName };
             setAutosaveState('saved');
             if (!silent) toast.success('Outcome and notes saved');
         } catch (error) {
@@ -202,7 +212,9 @@ export default function DialCallPage() {
 
         const unchanged =
             lastSavedRef.current.outcome === String(outcome || '') &&
-            lastSavedRef.current.notes === String(notes || '');
+            lastSavedRef.current.notes === String(notes || '') &&
+            lastSavedRef.current.dealId === String(dealId || '') &&
+            lastSavedRef.current.dealName === String(dealName || '');
         if (unchanged) {
             setAutosaveState('saved');
             return undefined;
@@ -213,7 +225,7 @@ export default function DialCallPage() {
             handleSaveDisposition({ silent: true });
         }, 900);
         return () => clearTimeout(timer);
-    }, [callPublicId, hasEditedDisposition, outcome, notes]);
+    }, [callPublicId, hasEditedDisposition, outcome, notes, dealId, dealName]);
 
     function goBackToDial() {
         const path = campaignId ? `/dial?campaign_id=${encodeURIComponent(campaignId)}` : '/dial';
@@ -324,7 +336,7 @@ export default function DialCallPage() {
                                 Call Wrap-Up
                             </Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                Notes and outcome autosave during the call and are stored in DB.
+                                Notes, outcome and deal details autosave during the call and are stored in DB.
                             </Typography>
 
                             <TextField
@@ -357,6 +369,26 @@ export default function DialCallPage() {
                                 placeholder="Add summary, objections, next step, follow-up context..."
                                 sx={{ mb: 2 }}
                             />
+                            <TextField
+                                fullWidth
+                                label="Deal ID (Optional)"
+                                value={dealId}
+                                onChange={(event) => {
+                                    setDealId(event.target.value);
+                                    setHasEditedDisposition(true);
+                                }}
+                                sx={{ mb: 2 }}
+                            />
+                            <TextField
+                                fullWidth
+                                label="Deal Name (Optional)"
+                                value={dealName}
+                                onChange={(event) => {
+                                    setDealName(event.target.value);
+                                    setHasEditedDisposition(true);
+                                }}
+                                sx={{ mb: 2 }}
+                            />
                             <Alert
                                 severity={
                                     autosaveState === 'error'
@@ -372,9 +404,9 @@ export default function DialCallPage() {
                                 {autosaveState === 'error'
                                     ? 'Autosave failed. Use Save button.'
                                     : autosaveState === 'saving'
-                                        ? 'Saving notes and outcome...'
+                                        ? 'Saving call wrap-up...'
                                         : autosaveState === 'saved'
-                                            ? 'Notes and outcome saved in DB.'
+                                            ? 'Call wrap-up saved in DB.'
                                             : 'Changes will autosave while you type.'}
                             </Alert>
                             <Button
@@ -383,7 +415,7 @@ export default function DialCallPage() {
                                 onClick={() => handleSaveDisposition({ silent: false })}
                                 disabled={savingDisposition}
                             >
-                                {savingDisposition ? 'Saving...' : 'Save Outcome & Notes'}
+                                {savingDisposition ? 'Saving...' : 'Save Wrap-Up'}
                             </Button>
                         </CardContent>
                     </Card>

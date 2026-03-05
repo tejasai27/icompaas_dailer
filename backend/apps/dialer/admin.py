@@ -6,6 +6,7 @@ from .models import (
     CallDisposition,
     CallSession,
     CRMSyncLog,
+    HubSpotIntegrationSettings,
     Lead,
     LeadDialState,
     RecordingAsset,
@@ -53,7 +54,7 @@ class CampaignLeadAdmin(admin.ModelAdmin):
 
 @admin.register(CallDisposition)
 class CallDispositionAdmin(admin.ModelAdmin):
-    list_display = ("call", "outcome", "created_by", "created_at")
+    list_display = ("call", "outcome", "hubspot_deal_id", "hubspot_deal_name", "created_by", "created_at")
     list_filter = ("outcome",)
 
 
@@ -61,6 +62,20 @@ class CallDispositionAdmin(admin.ModelAdmin):
 class CRMSyncLogAdmin(admin.ModelAdmin):
     list_display = ("id", "call", "target", "status", "retry_count", "created_at")
     list_filter = ("target", "status")
+
+
+@admin.register(HubSpotIntegrationSettings)
+class HubSpotIntegrationSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "enabled",
+        "deal_association_mode",
+        "default_deal_id",
+        "default_deal_name",
+        "auto_sync_terminal_calls",
+        "auto_sync_on_disposition",
+        "updated_at",
+    )
 
 
 @admin.register(RecordingAsset)

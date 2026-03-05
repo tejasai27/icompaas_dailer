@@ -127,7 +127,7 @@ export default function RecordingTranscriptPage() {
                     </Box>
                     {!hasTranscript ? (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            Transcript not available yet. Click "Generate Transcript" to run Whisper.
+                            Transcript is generated automatically when recording is available. You can use "Generate Transcript" to retry manually.
                         </Alert>
                     ) : null}
                     {recording.transcript_error ? (
@@ -220,4 +220,3 @@ export default function RecordingTranscriptPage() {
         </Box>
     );
 }
-

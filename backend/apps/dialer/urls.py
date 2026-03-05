@@ -3,6 +3,13 @@ from . import views
 
 urlpatterns = [
     path("health/", views.health, name="health"),
+    path("integrations/hubspot/settings/", views.hubspot_settings, name="hubspot-settings"),
+    path("integrations/hubspot/test/", views.test_hubspot_settings, name="test-hubspot-settings"),
+    path(
+        "integrations/hubspot/sync-call/<uuid:call_public_id>/",
+        views.sync_call_to_hubspot,
+        name="sync-call-to-hubspot",
+    ),
     path("settings/exotel/wait-audio/", views.get_exotel_wait_audio, name="get-exotel-wait-audio"),
     path("settings/exotel/wait-audio/upload/", views.upload_exotel_wait_audio, name="upload-exotel-wait-audio"),
     path("settings/exotel/wait-audio/clear/", views.clear_exotel_wait_audio, name="clear-exotel-wait-audio"),

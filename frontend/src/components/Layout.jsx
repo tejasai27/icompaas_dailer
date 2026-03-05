@@ -8,7 +8,7 @@ import {
 import {
     Dashboard, Campaign, Headphones, Contacts, Phone, Dialpad,
     History, Settings, Menu, ChevronLeft, PowerSettingsNew,
-    Notifications, Circle, People, AudioFile
+    Notifications, Circle, People, AudioFile, Hub
 } from '@mui/icons-material';
 import useAuth from '../context/useAuth';
 
@@ -23,6 +23,7 @@ const nav = [
     { label: 'Contacts', icon: <Contacts />, path: '/contacts' },
     { label: 'Call Logs', icon: <History />, path: '/call-logs' },
     { label: 'Call Recordings', icon: <AudioFile />, path: '/recordings' },
+    { label: 'Integrations', icon: <Hub />, path: '/integrations' },
     { label: 'Settings', icon: <Settings />, path: '/settings' },
 ];
 

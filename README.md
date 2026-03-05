@@ -34,6 +34,9 @@ Monorepo setup for a React + Django power dialer with PostgreSQL and Redis, desi
 - `POST /api/v1/dialer/recordings/<recording_public_id>/transcribe/`
 - `POST /api/v1/dialer/calls/start/exotel/`
 - `POST /api/v1/dialer/webhooks/exotel/`
+- `GET/POST /api/v1/dialer/integrations/hubspot/settings/`
+- `POST /api/v1/dialer/integrations/hubspot/test/`
+- `POST /api/v1/dialer/integrations/hubspot/sync-call/<call_public_id>/`
 
 ## Exotel Setup
 In `.env` set:
@@ -43,7 +46,7 @@ In `.env` set:
 - `EXOTEL_API_TOKEN=...`
 - `EXOTEL_SUBDOMAIN=api.in.exotel.com`
 - `EXOTEL_CALLER_ID=<your_exophone_or_verified_cli>`
-- `EXOTEL_MAX_CALL_DURATION_SECONDS=60`
+- `EXOTEL_MAX_CALL_DURATION_SECONDS=0` (0 = no provider time limit)
 - `EXOTEL_WAIT_URL=<public_audio_url_or_exotel_voice_url>`
 - `EXOTEL_START_PLAYBACK_VALUE=<public_audio_url_or_provider_value>`
 - `EXOTEL_START_PLAYBACK_TO=both` (or `callee`)
@@ -54,6 +57,19 @@ Direct upload option:
 - Upload `mp3/wav/ogg/m4a`
 - Backend hosts it under `/media/...` and uses it as Exotel `WaitUrl`
 
+## HubSpot Integration Setup
+You can configure HubSpot from UI: `Integrations -> HubSpot`.
+
+Optional env defaults:
+- `HUBSPOT_ENABLED=1`
+- `HUBSPOT_ACCESS_TOKEN=<hubspot_private_app_token>`
+- `HUBSPOT_TIMEOUT_SECONDS=12`
+
+Call sync behavior:
+- Call details are synced to HubSpot Call activities.
+- Sync runs automatically on terminal call state and on disposition save (configurable in Integrations page).
+- Deal association supports Deal ID or Deal Name.
+
 ## Whisper Transcription Setup
 In `.env` set:
 - `TRANSCRIPTION_BACKEND=local_whisper`
@@ -62,6 +78,7 @@ In `.env` set:
 - `WHISPER_COMPUTE_TYPE=int8` (or `float16` on GPU)
 - `WHISPER_LANGUAGE=` (optional, e.g. `en`)
 - `WHISPER_VAD_FILTER=0` (set `1` only if you want VAD segmentation)
+- `AUTO_TRANSCRIBE_RECORDINGS=1` (auto-run transcript when recording appears)
 
 Optional OpenAI fallback:
 - set `TRANSCRIPTION_BACKEND=openai`

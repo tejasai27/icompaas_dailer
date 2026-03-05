@@ -192,6 +192,8 @@ class CallDisposition(models.Model):
     call = models.OneToOneField(CallSession, on_delete=models.CASCADE, related_name="disposition")
     outcome = models.CharField(max_length=32, choices=CallOutcome.choices)
     notes = models.TextField(blank=True)
+    hubspot_deal_id = models.CharField(max_length=64, blank=True)
+    hubspot_deal_name = models.CharField(max_length=255, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -221,6 +223,30 @@ class CRMSyncLog(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["target", "status", "created_at"])]
+
+
+class HubSpotDealAssociationMode(models.TextChoices):
+    DEAL_ID = "deal_id", "Deal ID"
+    DEAL_NAME = "deal_name", "Deal Name"
+
+
+class HubSpotIntegrationSettings(models.Model):
+    enabled = models.BooleanField(default=False)
+    access_token = models.TextField(blank=True)
+    deal_association_mode = models.CharField(
+        max_length=16,
+        choices=HubSpotDealAssociationMode.choices,
+        default=HubSpotDealAssociationMode.DEAL_ID,
+    )
+    default_deal_id = models.CharField(max_length=64, blank=True)
+    default_deal_name = models.CharField(max_length=255, blank=True)
+    auto_sync_terminal_calls = models.BooleanField(default=True)
+    auto_sync_on_disposition = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"HubSpot Settings ({'enabled' if self.enabled else 'disabled'})"
 
 
 class RecordingSource(models.TextChoices):
