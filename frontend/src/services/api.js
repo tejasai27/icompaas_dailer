@@ -1,16 +1,21 @@
 import axios from 'axios';
 
-const inferredApiBase =
-    typeof window !== 'undefined'
-        ? `${window.location.protocol}//${window.location.hostname}:8002/api/v1/dialer`
-        : 'http://localhost:8002/api/v1/dialer';
+const trimTrailingSlashes = (value) => String(value || '').trim().replace(/\/+$/, '');
+const normalizeDialerApiBase = (value) => {
+    const base = trimTrailingSlashes(value);
+    if (!base) return '/api/v1/dialer';
+    if (base.endsWith('/api/v1/dialer')) return base;
+    if (base.endsWith('/api/v1')) return `${base}/dialer`;
+    return `${base}/api/v1/dialer`;
+};
 
 const BASE_URL =
-    import.meta.env.VITE_API_URL ||
-    import.meta.env.VITE_API_BASE_URL ||
-    import.meta.env.VITE_API_BASE ||
-    (typeof process !== 'undefined' ? process.env.REACT_APP_API_URL : undefined) ||
-    inferredApiBase;
+    normalizeDialerApiBase(
+        import.meta.env.VITE_API_URL ||
+        import.meta.env.VITE_API_BASE_URL ||
+        import.meta.env.VITE_API_BASE ||
+        (typeof process !== 'undefined' ? process.env.REACT_APP_API_URL : undefined)
+    );
 
 const api = axios.create({
     baseURL: BASE_URL,
@@ -42,6 +47,7 @@ api.interceptors.response.use(
                     localStorage.removeItem('access_token');
                     localStorage.removeItem('refresh_token');
                     localStorage.removeItem('user');
+                    window.location.href = '/login';
                 }
             }
         }

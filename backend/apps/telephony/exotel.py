@@ -105,9 +105,14 @@ class ExotelProvider(TelephonyProvider):
             payload.append(("Record", "true"))
 
         if request.callback_url:
+            callback_url = request.callback_url
+            webhook_secret = os.getenv("EXOTEL_WEBHOOK_SECRET", "").strip()
+            if webhook_secret:
+                sep = "&" if "?" in callback_url else "?"
+                callback_url = f"{callback_url}{sep}token={webhook_secret}"
             payload.extend(
                 [
-                    ("StatusCallback", request.callback_url),
+                    ("StatusCallback", callback_url),
                     ("StatusCallbackContentType", "application/json"),
                     ("StatusCallbackEvents[]", "answered"),
                     ("StatusCallbackEvents[]", "terminal"),

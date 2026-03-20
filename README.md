@@ -12,12 +12,24 @@ Monorepo setup for a React + Django power dialer with PostgreSQL and Redis, desi
 
 ## Local Run (Starter)
 1. Copy `.env.example` to `.env` and fill credentials.
-2. Start services:
+2. Start services (single-port mode, recommended):
    ```bash
    docker compose up --build -d
    ```
-3. Backend: `http://localhost:8002`
-4. Frontend: `http://localhost:5173`
+3. Frontend (website): `http://localhost` (default `PUBLIC_HTTP_PORT=80`)
+4. API/media use the same host via proxy paths:
+   - `http://localhost/api/...`
+   - `http://localhost/media/...`
+5. Open only one public port in firewall/security group: `PUBLIC_HTTP_PORT` (default `80`).
+
+## Optional Direct Service Ports (Debug / Local Tooling)
+By default only `PUBLIC_HTTP_PORT` is exposed.
+If you need direct host access to backend/Postgres/Redis, uncomment the `ports:` lines in `docker-compose.yml`.
+
+Default host ports from `.env` when those lines are enabled:
+- Backend API: `8000` (`BACKEND_HOST_PORT`)
+- PostgreSQL: `5433` (`POSTGRES_HOST_PORT`)
+- Redis: `6380` (`REDIS_HOST_PORT`)
 
 ## Backend API (Current)
 - `GET /api/v1/dialer/health/`
@@ -86,7 +98,7 @@ Optional OpenAI fallback:
 
 ## Make a Test Call
 ```bash
-curl -X POST http://localhost:8002/api/v1/dialer/calls/start/exotel/ \
+curl -X POST http://localhost/api/v1/dialer/calls/start/exotel/ \
   -H "Content-Type: application/json" \
   -d '{
     "lead_id": 1,
@@ -95,9 +107,8 @@ curl -X POST http://localhost:8002/api/v1/dialer/calls/start/exotel/ \
   }'
 ```
 
-## Scalable Profile (Recommended Architecture)
-- Compose template: `docker-compose.scalable.yml`
+## Architecture Docs
 - Architecture blueprint: `docs/ARCHITECTURE.md`
 - Database scaling guide: `docs/DATABASE_SCALING.md`
 
-This profile separates API, telephony workers, realtime gateway, scheduler, CRM sync workers, and adds durable event streaming + observability.
+The target architecture separates API, telephony workers, realtime gateway, scheduler, CRM sync workers, and adds durable event streaming + observability.

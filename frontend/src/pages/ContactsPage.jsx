@@ -5,7 +5,7 @@ import {
     Button, Dialog, DialogTitle, DialogContent, DialogActions, Grid, IconButton, Tooltip, Checkbox
 } from '@mui/material';
 import { Add, Search, Edit, DeleteOutline } from '@mui/icons-material';
-import { request } from '../lib/api';
+import api from '../services/api';
 import toast from 'react-hot-toast';
 
 const STATUS_COLORS = {
@@ -43,15 +43,15 @@ export default function ContactsPage() {
     const fetchContacts = useCallback(async () => {
         setLoading(true);
         try {
-            let path = `/api/v1/dialer/leads/?page=${page}&page_size=${PAGE_SIZE}`;
+            let path = `/leads/?page=${page}&page_size=${PAGE_SIZE}`;
             if (search.trim()) {
                 path += `&search=${encodeURIComponent(search.trim())}`;
             }
-            const data = await request(path);
+            const { data } = await api.get(path);
             setContacts(Array.isArray(data.results) ? data.results : []);
             setCount(Number(data.count || 0));
         } catch (e) {
-            toast.error(e.message || 'Failed to load contacts');
+            toast.error(e.response?.data?.error || e.message || 'Failed to load contacts');
         } finally {
             setLoading(false);
         }
@@ -86,14 +86,11 @@ export default function ContactsPage() {
 
         setCreating(true);
         try {
-            await request('/api/v1/dialer/leads/manual/', {
-                method: 'POST',
-                body: JSON.stringify({
-                    full_name: fullName,
-                    phone_e164: phone,
-                    email: form.email.trim(),
-                    company_name: form.company_name.trim(),
-                }),
+            await api.post('/leads/manual/', {
+                full_name: fullName,
+                phone_e164: phone,
+                email: form.email.trim(),
+                company_name: form.company_name.trim(),
             });
             toast.success('Contact created');
             setCreateOpen(false);
@@ -104,7 +101,7 @@ export default function ContactsPage() {
                 fetchContacts();
             }
         } catch (e) {
-            toast.error(e.message || 'Failed to create contact');
+            toast.error(e.response?.data?.error || e.message || 'Failed to create contact');
         } finally {
             setCreating(false);
         }
@@ -133,21 +130,18 @@ export default function ContactsPage() {
 
         setUpdating(true);
         try {
-            await request(`/api/v1/dialer/leads/${editingContact.id}/update/`, {
-                method: 'POST',
-                body: JSON.stringify({
-                    full_name: fullName,
-                    phone_e164: phone,
-                    email: editForm.email.trim(),
-                    company_name: editForm.company_name.trim(),
-                }),
+            await api.post(`/leads/${editingContact.id}/update/`, {
+                full_name: fullName,
+                phone_e164: phone,
+                email: editForm.email.trim(),
+                company_name: editForm.company_name.trim(),
             });
             toast.success('Contact updated');
             setEditOpen(false);
             setEditingContact(null);
             fetchContacts();
         } catch (e) {
-            toast.error(e.message || 'Failed to update contact');
+            toast.error(e.response?.data?.error || e.message || 'Failed to update contact');
         } finally {
             setUpdating(false);
         }
@@ -160,19 +154,18 @@ export default function ContactsPage() {
 
         setDeletingId(contact.id);
         try {
-            await request(`/api/v1/dialer/leads/${contact.id}/delete/`, {
-                method: 'POST',
-            });
+            await api.post(`/leads/${contact.id}/delete/`);
             toast.success('Contact deleted');
             setSelectedIds((prev) => prev.filter((id) => id !== contact.id));
             refreshAfterDelete(1);
         } catch (e) {
-            if (String(e.message || '').includes('contact_has_call_history')) {
+            const errMsg = e.response?.data?.error || e.message || '';
+            if (String(errMsg).includes('contact_has_call_history')) {
                 toast.error('Cannot delete contact with call history');
-            } else if (String(e.message || '').includes('contact_call_in_progress')) {
+            } else if (String(errMsg).includes('contact_call_in_progress')) {
                 toast.error('Cannot delete contact while call is in progress');
             } else {
-                toast.error(e.message || 'Failed to delete contact');
+                toast.error(errMsg || 'Failed to delete contact');
             }
         } finally {
             setDeletingId(null);
@@ -204,10 +197,7 @@ export default function ContactsPage() {
         if (!ok) return;
 
         try {
-            const data = await request('/api/v1/dialer/leads/bulk-delete/', {
-                method: 'POST',
-                body: JSON.stringify({ lead_ids: selectedIds }),
-            });
+            const { data } = await api.post('/leads/bulk-delete/', { lead_ids: selectedIds });
 
             const deleted = Number(data?.deleted || 0);
             const blockedInProgress = Number((data?.blocked_in_progress || []).length);
@@ -233,7 +223,7 @@ export default function ContactsPage() {
             setSelectedIds((prev) => prev.filter((id) => !deletedIds.includes(id)));
             refreshAfterDelete(deleted);
         } catch (e) {
-            toast.error(e.message || 'Failed bulk delete');
+            toast.error(e.response?.data?.error || e.message || 'Failed bulk delete');
         }
     }
 
@@ -248,10 +238,7 @@ export default function ContactsPage() {
         if (!ok) return;
 
         try {
-            const data = await request('/api/v1/dialer/leads/bulk-delete-filtered/', {
-                method: 'POST',
-                body: JSON.stringify({ search: text }),
-            });
+            const { data } = await api.post('/leads/bulk-delete-filtered/', { search: text });
 
             const deleted = Number(data?.deleted || 0);
             const blockedInProgress = Number((data?.blocked_in_progress || []).length);
@@ -279,7 +266,7 @@ export default function ContactsPage() {
                 fetchContacts();
             }
         } catch (e) {
-            toast.error(e.message || 'Failed filtered bulk delete');
+            toast.error(e.response?.data?.error || e.message || 'Failed filtered bulk delete');
         }
     }
 

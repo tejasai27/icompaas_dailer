@@ -24,7 +24,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { request } from '../lib/api';
+import api from '../services/api';
 
 const OUTCOME_OPTIONS = [
     { value: 'connected', label: 'Connected' },
@@ -116,7 +116,7 @@ export default function DialCallPage() {
             setLoading(true);
         }
         try {
-            const data = await request(`/api/v1/dialer/calls/${callPublicId}/?sync_exotel=1`);
+            const { data } = await api.get(`/calls/${callPublicId}/?sync_exotel=1`);
             const current = data?.call || null;
             setCall(current);
             const serverOutcomeRaw = String(current?.call_outcome || '').trim();
@@ -138,7 +138,7 @@ export default function DialCallPage() {
                 setAutosaveState(serverOutcomeRaw || serverNotes || serverDealId || serverDealName ? 'saved' : 'idle');
             }
         } catch (error) {
-            toast.error(error.message || 'Failed to load call status');
+            toast.error(error.response?.data?.error || error.message || 'Failed to load call status');
         } finally {
             if (silent) {
                 setRefreshing(false);
@@ -181,11 +181,11 @@ export default function DialCallPage() {
         if (!callPublicId) return;
         setHangupLoading(true);
         try {
-            await request(`/api/v1/dialer/calls/${callPublicId}/hangup/`, { method: 'POST' });
+            await api.post(`/calls/${callPublicId}/hangup/`);
             toast.success('Call end requested');
             await loadCall({ silent: true });
         } catch (error) {
-            toast.error(error.message || 'Failed to end call');
+            toast.error(error.response?.data?.error || error.message || 'Failed to end call');
         } finally {
             setHangupLoading(false);
         }
@@ -199,14 +199,11 @@ export default function DialCallPage() {
         }
         if (!silent) setSavingDisposition(true);
         try {
-            const data = await request(`/api/v1/dialer/calls/${callPublicId}/disposition/`, {
-                method: 'POST',
-                body: JSON.stringify({
-                    outcome,
-                    notes,
-                    deal_id: dealId,
-                    deal_name: dealName,
-                }),
+            const { data } = await api.post(`/calls/${callPublicId}/disposition/`, {
+                outcome,
+                notes,
+                deal_id: dealId,
+                deal_name: dealName,
             });
             if (data?.call) {
                 setCall(data.call);
@@ -216,7 +213,7 @@ export default function DialCallPage() {
             if (!silent) toast.success('Outcome and notes saved');
         } catch (error) {
             setAutosaveState('error');
-            if (!silent) toast.error(error.message || 'Failed to save disposition');
+            if (!silent) toast.error(error.response?.data?.error || error.message || 'Failed to save disposition');
         } finally {
             if (!silent) setSavingDisposition(false);
         }

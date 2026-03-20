@@ -1,25 +1,38 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import CircularProgress from '@mui/material/CircularProgress';
+import Box from '@mui/material/Box';
 import { Toaster } from 'react-hot-toast';
 import AuthProvider from './context/AuthProvider';
 import Layout from './components/Layout';
-import DashboardPage from './pages/DashboardPage';
-import CampaignsPage from './pages/CampaignsPage';
-import CampaignCreatePage from './pages/CampaignCreatePage';
-import CampaignDetailPage from './pages/CampaignDetailPage';
-import ContactsPage from './pages/ContactsPage';
-import DialPage from './pages/DialPage';
-import DialCallPage from './pages/DialCallPage';
-import CallLogsPage from './pages/CallLogsPage';
-import CallRecordingsPage from './pages/CallRecordingsPage';
-import RecordingTranscriptPage from './pages/RecordingTranscriptPage';
-import SettingsPage from './pages/SettingsPage';
-import IntegrationsPage from './pages/IntegrationsPage';
-import HubspotRecordsPage from './pages/HubspotRecordsPage';
-import SalesfloorPage from './pages/SalesfloorPage';
-import SdrsPage from './pages/SdrsPage';
+import ProtectedRoute from './components/ProtectedRoute';
+import LoginPage from './pages/LoginPage';
+
+// Lazy-loaded page components
+const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
+const CampaignsPage = React.lazy(() => import('./pages/CampaignsPage'));
+const CampaignCreatePage = React.lazy(() => import('./pages/CampaignCreatePage'));
+const CampaignDetailPage = React.lazy(() => import('./pages/CampaignDetailPage'));
+const ContactsPage = React.lazy(() => import('./pages/ContactsPage'));
+const DialPage = React.lazy(() => import('./pages/DialPage'));
+const DialCallPage = React.lazy(() => import('./pages/DialCallPage'));
+const CallLogsPage = React.lazy(() => import('./pages/CallLogsPage'));
+const CallRecordingsPage = React.lazy(() => import('./pages/CallRecordingsPage'));
+const RecordingTranscriptPage = React.lazy(() => import('./pages/RecordingTranscriptPage'));
+const SettingsPage = React.lazy(() => import('./pages/SettingsPage'));
+const IntegrationsPage = React.lazy(() => import('./pages/IntegrationsPage'));
+const HubspotRecordsPage = React.lazy(() => import('./pages/HubspotRecordsPage'));
+const SalesfloorPage = React.lazy(() => import('./pages/SalesfloorPage'));
+const SdrsPage = React.lazy(() => import('./pages/SdrsPage'));
+
+// Loading fallback
+const PageLoader = () => (
+  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+    <CircularProgress />
+  </Box>
+);
 
 const lightTheme = createTheme({
   palette: {
@@ -263,29 +276,31 @@ function App() {
               error: { iconTheme: { primary: '#dc2626', secondary: '#fff' } },
             }}
           />
-          <Routes>
-            <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/" element={<Layout />}>
-              <Route index element={<Navigate to="/dashboard" replace />} />
-              <Route path="dashboard" element={<DashboardPage />} />
-              <Route path="dial" element={<DialPage />} />
-              <Route path="dial/call/:callPublicId" element={<DialCallPage />} />
-              <Route path="campaigns" element={<CampaignsPage />} />
-              <Route path="campaigns/new" element={<CampaignCreatePage />} />
-              <Route path="campaigns/:id" element={<CampaignDetailPage />} />
-              <Route path="salesfloor" element={<SalesfloorPage />} />
-              <Route path="sdrs" element={<SdrsPage />} />
-              <Route path="contacts" element={<ContactsPage />} />
-              <Route path="call-logs" element={<CallLogsPage />} />
-              <Route path="recordings" element={<CallRecordingsPage />} />
-              <Route path="recordings/:recordingPublicId/transcript" element={<RecordingTranscriptPage />} />
-              <Route path="integrations" element={<IntegrationsPage />} />
-              <Route path="hubspot-records" element={<HubspotRecordsPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+                <Route index element={<Navigate to="/dashboard" replace />} />
+                <Route path="dashboard" element={<DashboardPage />} />
+                <Route path="dial" element={<DialPage />} />
+                <Route path="dial/call/:callPublicId" element={<DialCallPage />} />
+                <Route path="campaigns" element={<CampaignsPage />} />
+                <Route path="campaigns/new" element={<CampaignCreatePage />} />
+                <Route path="campaigns/:id" element={<CampaignDetailPage />} />
+                <Route path="salesfloor" element={<SalesfloorPage />} />
+                <Route path="sdrs" element={<SdrsPage />} />
+                <Route path="contacts" element={<ContactsPage />} />
+                <Route path="call-logs" element={<CallLogsPage />} />
+                <Route path="recordings" element={<CallRecordingsPage />} />
+                <Route path="recordings/:recordingPublicId/transcript" element={<RecordingTranscriptPage />} />
+                <Route path="integrations" element={<IntegrationsPage />} />
+                <Route path="hubspot-records" element={<HubspotRecordsPage />} />
+                <Route path="settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              </Route>
+              <Route path="*" element={<Navigate to="/login" replace />} />
+            </Routes>
+          </Suspense>
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>

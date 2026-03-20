@@ -16,7 +16,7 @@ import {
 } from '@mui/material';
 import { Backspace, Call, Contacts, Dialpad, Pause, PlayArrow, Refresh } from '@mui/icons-material';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { request } from '../lib/api';
+import api from '../services/api';
 import toast from 'react-hot-toast';
 
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
@@ -73,14 +73,14 @@ export default function DialPage() {
         async function loadAgents() {
             setLoadingAgents(true);
             try {
-                const data = await request('/api/v1/dialer/agents/');
+                const { data } = await api.get('/agents/');
                 const rows = Array.isArray(data.agents) ? data.agents : [];
                 setAgents(rows);
                 if (!agentId && rows.length > 0) {
                     setAgentId(String(rows[0].id));
                 }
             } catch (error) {
-                toast.error(error.message || 'Failed to load SDRs');
+                toast.error(error.response?.data?.error || error.message || 'Failed to load SDRs');
             } finally {
                 setLoadingAgents(false);
             }
@@ -93,14 +93,14 @@ export default function DialPage() {
         async function loadContacts() {
             setLoadingContacts(true);
             try {
-                let path = '/api/v1/dialer/leads/?page=1&page_size=100';
+                let path = '/leads/?page=1&page_size=100';
                 if (contactSearch.trim()) {
                     path += `&search=${encodeURIComponent(contactSearch.trim())}`;
                 }
                 if (campaignId) {
                     path += `&campaign=${encodeURIComponent(campaignId)}`;
                 }
-                const data = await request(path);
+                const { data } = await api.get(path);
                 if (!mounted) return;
                 const rows = Array.isArray(data.results) ? data.results : [];
                 setContacts(rows);
@@ -111,7 +111,7 @@ export default function DialPage() {
                 }
             } catch (error) {
                 if (mounted) {
-                    toast.error(error.message || 'Failed to load contacts');
+                    toast.error(error.response?.data?.error || error.message || 'Failed to load contacts');
                 }
             } finally {
                 if (mounted) {
@@ -136,10 +136,12 @@ export default function DialPage() {
             setLoadingCampaign(true);
         }
         try {
-            const [campaignData, queueData] = await Promise.all([
-                request(`/api/v1/dialer/campaigns/${campaignId}/`),
-                request(`/api/v1/dialer/campaigns/${campaignId}/queue/`),
+            const [campaignRes, queueRes] = await Promise.all([
+                api.get(`/campaigns/${campaignId}/`),
+                api.get(`/campaigns/${campaignId}/queue/`),
             ]);
+            const campaignData = campaignRes.data;
+            const queueData = queueRes.data;
             setCampaign(campaignData);
             setCampaignQueue(Array.isArray(queueData?.results) ? queueData.results : []);
 
@@ -154,7 +156,7 @@ export default function DialPage() {
             }
         } catch (error) {
             if (showErrorToast) {
-                toast.error(error.message || 'Failed to load campaign context');
+                toast.error(error.response?.data?.error || error.message || 'Failed to load campaign context');
             }
         } finally {
             if (!silent) {
@@ -223,7 +225,7 @@ export default function DialPage() {
 
         const tickCampaign = async () => {
             try {
-                await request(`/api/v1/dialer/campaigns/${campaignId}/tick/`, { method: 'POST' });
+                await api.post(`/campaigns/${campaignId}/tick/`);
                 if (!cancelled) {
                     await reloadCampaignContext(false, { silent: true });
                 }
@@ -266,10 +268,7 @@ export default function DialPage() {
             if (callerId.trim()) {
                 payload.caller_id = callerId.trim();
             }
-            const data = await request('/api/v1/dialer/calls/start/exotel/', {
-                method: 'POST',
-                body: JSON.stringify(payload),
-            });
+            const { data } = await api.post('/calls/start/exotel/', payload);
             setLastCall(data.call || null);
             toast.success('Call initiated');
 
@@ -281,7 +280,7 @@ export default function DialPage() {
                 navigate(nextPath);
             }
         } catch (error) {
-            toast.error(error.message || 'Failed to start call');
+            toast.error(error.response?.data?.error || error.message || 'Failed to start call');
         } finally {
             setCalling(false);
         }
@@ -295,16 +294,13 @@ export default function DialPage() {
         }
         setCalling(true);
         try {
-            await request('/api/v1/dialer/leads/manual/', {
-                method: 'POST',
-                body: JSON.stringify({
-                    full_name: quickName.trim() || `Quick Dial ${phone}`,
-                    phone_e164: phone,
-                }),
+            await api.post('/leads/manual/', {
+                full_name: quickName.trim() || `Quick Dial ${phone}`,
+                phone_e164: phone,
             });
 
-            const list = await request(
-                `/api/v1/dialer/leads/?page=1&page_size=20&search=${encodeURIComponent(phone)}`
+            const { data: list } = await api.get(
+                `/leads/?page=1&page_size=20&search=${encodeURIComponent(phone)}`
             );
             const rows = Array.isArray(list.results) ? list.results : [];
             const match = rows.find((item) => normalizePhone(item.phone || item.phone_e164) === phone) || rows[0];
@@ -314,7 +310,7 @@ export default function DialPage() {
 
             await startCall(Number(match.id));
         } catch (error) {
-            toast.error(error.message || 'Failed to call number');
+            toast.error(error.response?.data?.error || error.message || 'Failed to call number');
             setCalling(false);
         }
     }
@@ -331,7 +327,7 @@ export default function DialPage() {
         if (!campaignId) return;
         setCampaignActionLoading(true);
         try {
-            await request(`/api/v1/dialer/campaigns/${campaignId}/${action}/`, { method: 'POST' });
+            await api.post(`/campaigns/${campaignId}/${action}/`);
             const actionLabel = {
                 start: 'started',
                 resume: 'resumed',
@@ -341,7 +337,7 @@ export default function DialPage() {
             toast.success(`Campaign ${actionLabel}`);
             await reloadCampaignContext(false);
         } catch (error) {
-            toast.error(error.message || `Failed to ${action} campaign`);
+            toast.error(error.response?.data?.error || error.message || `Failed to ${action} campaign`);
         } finally {
             setCampaignActionLoading(false);
         }

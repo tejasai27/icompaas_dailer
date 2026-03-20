@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { request } from "../lib/api";
+import api from "../services/api";
 
 const initialCampaigns = [
   { id: "cmp-1", name: "India SMB March", leads: 2400, status: "running", retryPolicy: "no_answer x3" },
@@ -109,9 +109,8 @@ export default function AdminCampaignsPage() {
 
     setUploadState("uploading");
     try {
-      const result = await request("/api/v1/dialer/leads/upload/", {
-        method: "POST",
-        body: formData,
+      const { data: result } = await api.post("/leads/upload/", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
       setCampaigns((current) => [
@@ -138,7 +137,7 @@ export default function AdminCampaignsPage() {
       }
       setUploadState("done");
     } catch (error) {
-      setUploadError(error.message);
+      setUploadError(error.response?.data?.error || error.message);
       setUploadState("error");
     }
   }
@@ -155,13 +154,10 @@ export default function AdminCampaignsPage() {
     setManualState("submitting");
 
     try {
-      const result = await request("/api/v1/dialer/leads/manual/", {
-        method: "POST",
-        body: JSON.stringify({
-          campaign_name: name.trim(),
-          timezone,
-          leads: [manualLead],
-        }),
+      const { data: result } = await api.post("/leads/manual/", {
+        campaign_name: name.trim(),
+        timezone,
+        leads: [manualLead],
       });
 
       appendDraftCampaign(result.created_count, name.trim() || "Manual Intake");
@@ -169,7 +165,7 @@ export default function AdminCampaignsPage() {
       setManualLead(emptyManualLead);
       setManualState("done");
     } catch (error) {
-      setManualError(error.message);
+      setManualError(error.response?.data?.error || error.message);
       setManualState("error");
     }
   }
@@ -187,13 +183,10 @@ export default function AdminCampaignsPage() {
     setManualState("submitting");
 
     try {
-      const result = await request("/api/v1/dialer/leads/manual/", {
-        method: "POST",
-        body: JSON.stringify({
-          campaign_name: name.trim(),
-          timezone,
-          leads,
-        }),
+      const { data: result } = await api.post("/leads/manual/", {
+        campaign_name: name.trim(),
+        timezone,
+        leads,
       });
 
       appendDraftCampaign(result.created_count, name.trim() || "Manual Batch Intake");
@@ -201,7 +194,7 @@ export default function AdminCampaignsPage() {
       setSeparateLeadsText("");
       setManualState("done");
     } catch (error) {
-      setManualError(error.message);
+      setManualError(error.response?.data?.error || error.message);
       setManualState("error");
     }
   }

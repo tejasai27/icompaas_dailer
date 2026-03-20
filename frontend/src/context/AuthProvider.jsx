@@ -2,10 +2,8 @@ import { useEffect, useState } from 'react';
 import AuthContext from './authContext';
 import api from '../services/api';
 
-const DEFAULT_USER = { username: 'demo', full_name: 'Demo User', role: 'admin' };
-
 export default function AuthProvider({ children }) {
-    const [user, setUser] = useState(DEFAULT_USER);
+    const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -18,16 +16,16 @@ export default function AuthProvider({ children }) {
                     setUser(parsedUser);
                 } else {
                     localStorage.removeItem('user');
-                    setUser(DEFAULT_USER);
+                    setUser(null);
                 }
             } else {
-                setUser(DEFAULT_USER);
+                setUser(null);
             }
         } catch {
             localStorage.removeItem('user');
             localStorage.removeItem('access_token');
             localStorage.removeItem('refresh_token');
-            setUser(DEFAULT_USER);
+            setUser(null);
         }
         setLoading(false);
     }, []);
@@ -45,7 +43,7 @@ export default function AuthProvider({ children }) {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
         localStorage.removeItem('user');
-        setUser(DEFAULT_USER);
+        setUser(null);
     };
 
     return (

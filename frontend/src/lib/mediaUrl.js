@@ -4,15 +4,23 @@
  * The Django backend sometimes returns a relative URL like:
  *   /media/dialer/recordings/filename.mp3
  *
- * When this is served through Docker, the browser cannot reach
- * the Django media server via a relative path (which hits port 5173).
- * We prefix it with the backend's public URL (port 8002).
+ * In Docker/Vite setups, we prefer same-origin URLs so the dev server
+ * proxy can forward /media requests to backend.
  */
 
-const BACKEND_BASE =
-  typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:8002`
-    : 'http://localhost:8002';
+const trimTrailingSlashes = (value) => String(value || '').trim().replace(/\/+$/, '');
+const stripDialerPath = (value) => {
+  const base = trimTrailingSlashes(value);
+  if (!base) return '';
+  if (base.endsWith('/api/v1/dialer')) {
+    return base.slice(0, -'/api/v1/dialer'.length);
+  }
+  return base;
+};
+const BACKEND_BASE = stripDialerPath(
+  import.meta.env.VITE_API_BASE ||
+  import.meta.env.VITE_API_URL
+);
 
 /**
  * Convert a potentially relative media URL to a fully-qualified URL
@@ -31,9 +39,9 @@ export function resolveMediaUrl(url) {
     return trimmed;
   }
 
-  // Relative path like /media/... — prefix with backend base
+  // Relative path like /media/... — use same-origin unless backend base is explicitly configured
   if (trimmed.startsWith('/')) {
-    return `${BACKEND_BASE}${trimmed}`;
+    return BACKEND_BASE ? `${BACKEND_BASE}${trimmed}` : trimmed;
   }
 
   // Unexpected format — return as-is

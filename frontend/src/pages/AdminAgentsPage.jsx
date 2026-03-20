@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { request } from "../lib/api";
+import api from "../services/api";
 
 const STATUS_OPTIONS = ["available", "ringing", "busy", "wrap_up", "offline"];
 
@@ -30,12 +30,12 @@ export default function AdminAgentsPage() {
     setAgentsState("loading");
     setError("");
     try {
-      const data = await request("/api/v1/dialer/agents/");
+      const { data } = await api.get("/agents/");
       setAgents(Array.isArray(data?.agents) ? data.agents : []);
       setAgentsState("ready");
     } catch (requestError) {
       setAgentsState("error");
-      setError(requestError.message);
+      setError(requestError.response?.data?.error || requestError.message);
     }
   }
 
@@ -44,15 +44,12 @@ export default function AdminAgentsPage() {
     setError("");
 
     try {
-      await request(`/api/v1/dialer/agents/${agentId}/status/`, {
-        method: "POST",
-        body: JSON.stringify({ status }),
-      });
+      await api.post(`/agents/${agentId}/status/`, { status });
 
       setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, status } : agent)));
       setMessage(`SDR ${agentId} set to ${status}.`);
     } catch (requestError) {
-      setError(`SDR ${agentId}: ${requestError.message}`);
+      setError(`SDR ${agentId}: ${requestError.response?.data?.error || requestError.message}`);
     }
   }
 

@@ -1,6 +1,13 @@
 import uuid
 from django.conf import settings
+from django.core.validators import RegexValidator
 from django.db import models
+
+
+phone_e164_validator = RegexValidator(
+    regex=r'^\+?[1-9]\d{1,14}$',
+    message='Phone number must be in E.164 format (e.g., +14155552671).',
+)
 
 
 class AgentStatus(models.TextChoices):
@@ -73,7 +80,7 @@ class Lead(models.Model):
     external_id = models.CharField(max_length=128, blank=True)
     full_name = models.CharField(max_length=200)
     company_name = models.CharField(max_length=200, blank=True)
-    phone_e164 = models.CharField(max_length=20, db_index=True)
+    phone_e164 = models.CharField(max_length=20, unique=True, validators=[phone_e164_validator])
     email = models.EmailField(blank=True)
     timezone = models.CharField(max_length=64, default="Asia/Kolkata")
     owner_hint = models.CharField(max_length=120, blank=True)
@@ -160,6 +167,13 @@ class CallSession(models.Model):
             models.Index(fields=["created_at"]),
             models.Index(fields=["provider", "provider_call_uuid"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "provider_call_uuid"],
+                name="unique_provider_call_uuid",
+                condition=~models.Q(provider_call_uuid=""),
+            ),
+        ]
 
 
 class CampaignLead(models.Model):
@@ -172,7 +186,7 @@ class CampaignLead(models.Model):
         default=CampaignLeadStatus.PENDING,
     )
     attempt_count = models.PositiveIntegerField(default=0)
-    last_outcome = models.CharField(max_length=32, blank=True)
+    last_outcome = models.CharField(max_length=32, choices=CallOutcome.choices, blank=True)
     last_attempt_at = models.DateTimeField(null=True, blank=True)
     next_attempt_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

@@ -1,7 +1,8 @@
-from django.urls import path
+from django.urls import include, path
 from . import views
 
 urlpatterns = [
+    path("auth/", include("apps.authentication.urls")),
     path("health/", views.health, name="health"),
     path("integrations/hubspot/settings/", views.hubspot_settings, name="hubspot-settings"),
     path("integrations/hubspot/test/", views.test_hubspot_settings, name="test-hubspot-settings"),
