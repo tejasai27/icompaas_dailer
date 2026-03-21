@@ -52,10 +52,14 @@ services:
     restart: unless-stopped
     env_file:
       - ./.env
+    # Run as root to fix media volume ownership, then drop to appuser
+    user: "0:0"
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py create_initial_users &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -c "chown -R 1000:1000 /app/media &&
+             exec runuser -u appuser -- sh -c '
+               python manage.py migrate &&
+               python manage.py create_initial_users &&
+               python manage.py runserver 0.0.0.0:8000'"
     volumes:
       - ./backend:/app
       - backend_media:/app/media
@@ -82,7 +86,10 @@ services:
     restart: unless-stopped
     env_file:
       - ./.env
-    command: celery -A config worker --loglevel=info --concurrency=2
+    user: "0:0"
+    command: >
+      sh -c "chown -R 1000:1000 /app/media &&
+             exec runuser -u appuser -- celery -A config worker --loglevel=info --concurrency=1"
     volumes:
       - ./backend:/app
       - backend_media:/app/media
@@ -96,7 +103,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 3G
 
   frontend:
     build:

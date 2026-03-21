@@ -30,7 +30,10 @@ RUN pip install --no-cache-dir /tmp/wheels/* && rm -rf /tmp/wheels
 
 WORKDIR /app
 COPY . /app
-RUN chown -R appuser:appuser /app
+
+# Pre-create media directory so Docker volumes inherit correct ownership
+RUN mkdir -p /app/media \
+    && chown -R appuser:appuser /app
 
 USER appuser
 
