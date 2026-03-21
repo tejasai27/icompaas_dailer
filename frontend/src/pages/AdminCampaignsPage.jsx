@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import api from "../services/api";
+import { parseManualLeads } from "../lib/parseLeads";
 
 const initialCampaigns = [
   { id: "cmp-1", name: "India SMB March", leads: 2400, status: "running", retryPolicy: "no_answer x3" },
@@ -15,20 +16,6 @@ const emptyManualLead = {
   owner_hint: "",
   external_id: "",
 };
-
-function parseSeparateLeads(text) {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [first = "", second = ""] = line.split(",").map((value) => value.trim());
-      if (second) {
-        return { full_name: first, phone_e164: second };
-      }
-      return { phone_e164: first };
-    });
-}
 
 function formatIngestMessage(result, prefix) {
   return `${prefix}: created ${result.created_count}, existing ${result.duplicate_existing_count}, duplicates in request ${result.duplicate_in_payload_count || 0}, invalid ${result.invalid_count}.`;
@@ -174,7 +161,7 @@ export default function AdminCampaignsPage() {
     event.preventDefault();
     clearManualMessages();
 
-    const leads = parseSeparateLeads(separateLeadsText);
+    const leads = parseManualLeads(separateLeadsText);
     if (leads.length === 0) {
       setManualError("Add at least one lead. Use one line per lead.");
       return;

@@ -8,7 +8,9 @@ import { Toaster } from 'react-hot-toast';
 import AuthProvider from './context/AuthProvider';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
-import LoginPage from './pages/LoginPage';
+import ErrorBoundary from './components/ErrorBoundary';
+
+const LoginPage = React.lazy(() => import('./pages/LoginPage'));
 
 // Lazy-loaded page components
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
@@ -276,6 +278,7 @@ function App() {
               error: { iconTheme: { primary: '#dc2626', secondary: '#fff' } },
             }}
           />
+          <ErrorBoundary>
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
@@ -301,6 +304,7 @@ function App() {
               <Route path="*" element={<Navigate to="/login" replace />} />
             </Routes>
           </Suspense>
+          </ErrorBoundary>
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Box,
@@ -14,6 +14,7 @@ import {
     MenuItem,
     Pagination,
     Select,
+    Skeleton,
     Table,
     TableBody,
     TableCell,
@@ -66,6 +67,7 @@ export default function CallRecordingsPage() {
     const [audioFile, setAudioFile] = useState(null);
     const [uploadTitle, setUploadTitle] = useState('');
     const totalPages = useMemo(() => Math.max(1, Math.ceil((count || 0) / PAGE_SIZE)), [count]);
+    const pollErrorCount = useRef(0);
 
     const fetchRecordings = async ({ syncExotel = false, silent = false } = {}) => {
         if (!silent) setLoading(true);
@@ -77,12 +79,16 @@ export default function CallRecordingsPage() {
             const { data } = await api.get(url);
             setRows(Array.isArray(data?.results) ? data.results : []);
             setCount(Number(data?.count || 0));
+            pollErrorCount.current = 0;
             if (syncExotel) {
                 const processed = Number(data?.sync?.processed_calls || 0);
                 toast.success(`Exotel recordings refreshed (${processed} calls checked)`);
             }
         } catch (error) {
-            toast.error(error?.response?.data?.error || 'Failed to load recordings');
+            pollErrorCount.current += 1;
+            if (!silent) {
+                toast.error(error?.response?.data?.error || 'Failed to load recordings');
+            }
         } finally {
             if (!silent) setLoading(false);
             if (syncExotel) setSyncing(false);
@@ -101,6 +107,10 @@ export default function CallRecordingsPage() {
             return undefined;
         }
         const interval = setInterval(() => {
+            if (pollErrorCount.current >= 5) {
+                clearInterval(interval);
+                return;
+            }
             fetchRecordings({ syncExotel: false, silent: true });
         }, 5000);
         return () => clearInterval(interval);
@@ -240,7 +250,14 @@ export default function CallRecordingsPage() {
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {rows.map((row) => (
+                            {loading ? Array.from({ length: 5 }).map((_, i) => (
+                                <TableRow key={i}>
+                                    {Array.from({ length: 7 }).map((_, j) => (
+                                        <TableCell key={j}><Skeleton /></TableCell>
+                                    ))}
+                                </TableRow>
+                            )) : null}
+                            {!loading && rows.map((row) => (
                                 <TableRow key={row.public_id} hover>
                                     <TableCell>
                                         <Typography fontWeight={600} fontSize="0.875rem">{row.title}</Typography>

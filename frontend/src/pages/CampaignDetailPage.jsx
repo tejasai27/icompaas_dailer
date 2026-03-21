@@ -3,8 +3,7 @@ import {
     Box, Card, CardContent, Typography, Grid, Chip, Button,
     LinearProgress, Tab, Tabs, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, IconButton, Tooltip,
-    Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress,
-    Alert
+    CircularProgress, Alert
 } from '@mui/material';
 import {
     ArrowBack, PlayArrow, Pause, Refresh, Download, Dialpad, Delete, RestartAlt
@@ -13,12 +12,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import api from '../services/api';
 import toast from 'react-hot-toast';
+import { CALL_STATUS_COLORS, normalizeCallStatus, formatCallStatus, formatSeconds } from '../lib/callStatus';
+import CallDetailDialog from '../components/CallDetailDialog';
 
 const STATUS_COLORS = {
     active: '#10b981', paused: '#f59e0b', completed: '#0142a2', draft: '#64748b',
-};
-const CALL_STATUS_COLORS = {
-    answered: '#10b981', 'sdr-cut': '#ef4444', 'no-answer': '#f59e0b', busy: '#ef4444', failed: '#ef4444', completed: '#0142a2', initiated: '#3b82f6',
 };
 
 function StatBadge({ label, value, color }) {
@@ -214,25 +212,6 @@ export default function CampaignDetailPage() {
         { name: 'Failed', value: analytics.failed_calls, color: '#ef4444' },
         { name: 'No Answer', value: Math.max(0, analytics.total_calls - analytics.answered_calls - analytics.failed_calls), color: '#f59e0b' },
     ].filter(d => d.value > 0) : [];
-
-    const formatSeconds = (total) => {
-        const value = Math.max(0, Number(total || 0));
-        const minutes = Math.floor(value / 60);
-        const seconds = value % 60;
-        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    };
-
-    const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
-    const formatCallStatus = (status) => {
-        const normalized = normalizeCallStatus(status);
-        if (!normalized) return '-';
-        if (normalized === 'sdr-cut') return 'SDR Cut the Call';
-        return normalized
-            .split('-')
-            .filter(Boolean)
-            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-            .join(' ');
-    };
 
     const activeCall = campaign?.active_call || null;
     const activeCallDisplayStatus = normalizeCallStatus(activeCall?.display_status || activeCall?.status);
@@ -606,52 +585,7 @@ export default function CampaignDetailPage() {
 
             </Card>
 
-            {/* Call detail dialog */}
-            {selectedCall && (
-                <Dialog open={Boolean(selectedCall)} onClose={() => setSelectedCall(null)} maxWidth="md" fullWidth
-                    PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}>
-                    <DialogTitle>
-                        Call with {selectedCall.contact_name}
-                        <Chip label={formatCallStatus(selectedCall.status)} size="small" sx={{ ml: 2 }} />
-                    </DialogTitle>
-                    <DialogContent>
-                        <Grid container spacing={2} sx={{ mb: 2 }}>
-                            {[
-                                { label: 'Phone', value: selectedCall.contact_phone },
-                                { label: 'SDR', value: selectedCall.agent_name },
-                                { label: 'Duration', value: selectedCall.duration_formatted },
-                                { label: 'Time', value: new Date(selectedCall.initiated_at).toLocaleString() },
-                            ].map(({ label, value }) => (
-                                <Grid item xs={6} key={label}>
-                                    <Typography variant="caption" color="text.secondary">{label}</Typography>
-                                    <Typography fontWeight={500}>{value}</Typography>
-                                </Grid>
-                            ))}
-                        </Grid>
-
-                        {selectedCall.transcript && (
-                            <Box sx={{ mt: 2 }}>
-                                <Typography variant="subtitle2" fontWeight={600} mb={1}>📝 Transcript</Typography>
-                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.05)', border: '1px solid rgba(1,66,162,0.1)' }}>
-                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-                                        {selectedCall.transcript}
-                                    </Typography>
-                                </Box>
-                            </Box>
-                        )}
-
-                        {selectedCall.agent_notes && (
-                            <Box sx={{ mt: 2 }}>
-                                <Typography variant="subtitle2" fontWeight={600} mb={1}>📋 SDR Notes</Typography>
-                                <Typography variant="body2" color="text.secondary">{selectedCall.agent_notes}</Typography>
-                            </Box>
-                        )}
-                    </DialogContent>
-                    <DialogActions>
-                        <Button onClick={() => setSelectedCall(null)}>Close</Button>
-                    </DialogActions>
-                </Dialog>
-            )}
+            <CallDetailDialog call={selectedCall} onClose={() => setSelectedCall(null)} />
         </Box>
     );
 }

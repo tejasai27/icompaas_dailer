@@ -16,13 +16,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { resolveMediaUrl } from '../lib/mediaUrl';
-
-function formatTime(seconds) {
-    const total = Math.max(0, Number(seconds || 0));
-    const minutes = Math.floor(total / 60);
-    const rem = total % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(Math.floor(rem)).padStart(2, '0')}`;
-}
+import { formatSeconds as formatTime } from '../lib/callStatus';
 
 function formatTranscriptStage(stage) {
     const value = String(stage || '').trim().toLowerCase().replace(/_/g, ' ');
@@ -64,6 +58,8 @@ export default function RecordingTranscriptPage() {
     );
     const transcriptProgressStage = formatTranscriptStage(recording?.transcript_progress_stage || transcriptStatus);
 
+    const pollErrorCount = useRef(0);
+
     const loadRecording = async ({ silent = false } = {}) => {
         if (!recordingPublicId) return;
         if (!silent) {
@@ -72,7 +68,9 @@ export default function RecordingTranscriptPage() {
         try {
             const { data } = await api.get(`/recordings/${recordingPublicId}/`);
             setRecording(data?.recording || null);
+            pollErrorCount.current = 0;
         } catch (error) {
+            pollErrorCount.current += 1;
             if (!silent) {
                 toast.error(error?.response?.data?.error || 'Failed to load recording');
             }
@@ -91,6 +89,10 @@ export default function RecordingTranscriptPage() {
         if (!recordingPublicId) return undefined;
         if (String(recording?.transcript_status || '').toLowerCase() !== 'processing') return undefined;
         const interval = setInterval(() => {
+            if (pollErrorCount.current >= 5) {
+                clearInterval(interval);
+                return;
+            }
             loadRecording({ silent: true });
         }, 5000);
         return () => clearInterval(interval);

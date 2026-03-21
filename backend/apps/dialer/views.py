@@ -1591,12 +1591,21 @@ def list_hubspot_records(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def list_agents(request: HttpRequest) -> JsonResponse:
-    agents = AgentProfile.objects.select_related("user").order_by("id")
-    return JsonResponse(
-        {
-            "agents": [_serialize_agent(agent) for agent in agents]
-        }
-    )
+    try:
+        agents = AgentProfile.objects.select_related("user").order_by("id")
+        return JsonResponse(
+            {
+                "agents": [_serialize_agent(agent) for agent in agents]
+            }
+        )
+    except (ProgrammingError, OperationalError) as exc:
+        logger.exception("list_agents_failed: %s", exc)
+        return JsonResponse(
+            {
+                "agents": [],
+                "warning": "agent data unavailable",
+            }
+        )
 
 
 @csrf_exempt
@@ -1766,13 +1775,14 @@ def list_campaigns(request: HttpRequest) -> JsonResponse:
         results = [_serialize_campaign(campaign) for campaign in campaigns]
         return JsonResponse({"count": len(results), "results": results})
     except (ProgrammingError, OperationalError) as exc:
-        message = str(exc).lower()
-        if "dialer_campaign" in message or "campaign" in message:
-            return JsonResponse(
-                {"error": "campaign tables missing. run: python manage.py migrate"},
-                status=500,
-            )
-        raise
+        logger.exception("list_campaigns_failed: %s", exc)
+        return JsonResponse(
+            {
+                "count": 0,
+                "results": [],
+                "warning": "campaign data unavailable",
+            }
+        )
 
 
 @csrf_exempt
@@ -2254,29 +2264,41 @@ def list_leads(request: HttpRequest) -> JsonResponse:
     search = str(request.GET.get("search") or "").strip()
     campaign_filter = str(request.GET.get("campaign_id") or request.GET.get("campaign") or "").strip()
 
-    queryset = Lead.objects.select_related("dial_state").order_by("-id")
-    if search:
-        queryset = queryset.filter(
-            Q(full_name__icontains=search)
-            | Q(phone_e164__icontains=search)
-            | Q(company_name__icontains=search)
-            | Q(email__icontains=search)
+    try:
+        queryset = Lead.objects.select_related("dial_state").order_by("-id")
+        if search:
+            queryset = queryset.filter(
+                Q(full_name__icontains=search)
+                | Q(phone_e164__icontains=search)
+                | Q(company_name__icontains=search)
+                | Q(email__icontains=search)
+            )
+        if campaign_filter:
+            if campaign_filter.isdigit():
+                queryset = queryset.filter(campaign_links__campaign_id=int(campaign_filter))
+            else:
+                queryset = queryset.filter(metadata__campaign_name=campaign_filter)
+
+        queryset = queryset.distinct()
+
+        count = queryset.count()
+        offset = (page - 1) * page_size
+        leads = list(queryset[offset : offset + page_size])
+
+        results = [_serialize_lead_row(lead) for lead in leads]
+
+        return JsonResponse({"count": count, "page": page, "page_size": page_size, "results": results})
+    except (ProgrammingError, OperationalError) as exc:
+        logger.exception("list_leads_failed: %s", exc)
+        return JsonResponse(
+            {
+                "count": 0,
+                "page": page,
+                "page_size": page_size,
+                "results": [],
+                "warning": "lead data unavailable",
+            }
         )
-    if campaign_filter:
-        if campaign_filter.isdigit():
-            queryset = queryset.filter(campaign_links__campaign_id=int(campaign_filter))
-        else:
-            queryset = queryset.filter(metadata__campaign_name=campaign_filter)
-
-    queryset = queryset.distinct()
-
-    count = queryset.count()
-    offset = (page - 1) * page_size
-    leads = list(queryset[offset : offset + page_size])
-
-    results = [_serialize_lead_row(lead) for lead in leads]
-
-    return JsonResponse({"count": count, "page": page, "page_size": page_size, "results": results})
 
 
 @require_GET
@@ -2753,72 +2775,87 @@ def list_call_logs(request: HttpRequest) -> JsonResponse:
     ordering = str(request.GET.get("ordering") or "-initiated_at").strip()
     include_raw = _parse_bool(request.GET.get("include_raw"), False)
 
-    queryset = CallSession.objects.select_related(*_call_session_select_related_fields())
+    try:
+        queryset = CallSession.objects.select_related(*_call_session_select_related_fields())
 
-    if search:
-        queryset = queryset.filter(
-            Q(lead__full_name__icontains=search)
-            | Q(lead__phone_e164__icontains=search)
-            | Q(lead__company_name__icontains=search)
-            | Q(agent__display_name__icontains=search)
-            | Q(provider_call_uuid__icontains=search)
+        if search:
+            queryset = queryset.filter(
+                Q(lead__full_name__icontains=search)
+                | Q(lead__phone_e164__icontains=search)
+                | Q(lead__company_name__icontains=search)
+                | Q(agent__display_name__icontains=search)
+                | Q(provider_call_uuid__icontains=search)
+            )
+        if campaign_filter and campaign_filter.isdigit():
+            queryset = queryset.filter(campaign_id=int(campaign_filter))
+        if call_id_filter:
+            queryset = queryset.filter(id=call_id_filter)
+
+        # Frontend sends "initiated_at"; map to model fields.
+        if ordering in {"initiated_at", "created_at"}:
+            queryset = queryset.order_by("started_at", "created_at")
+        elif ordering in {"-initiated_at", "-created_at"}:
+            queryset = queryset.order_by("-started_at", "-created_at")
+        else:
+            queryset = queryset.order_by("-created_at")
+
+        all_calls = list(queryset)
+        offset = (page - 1) * page_size
+        page_calls = all_calls[offset : offset + page_size]
+
+        # Keep list endpoint fast and deterministic: do not sync provider on plain refresh
+        # unless caller explicitly asks for it.
+        sync_exotel = _parse_bool(request.GET.get("sync_exotel"), False)
+        if sync_exotel and page_calls:
+            _sync_exotel_call_details(page_calls, max_fetch=20)
+            for row in page_calls:
+                row.refresh_from_db()
+
+        results = [_serialize_call_log(call, include_raw=include_raw) for call in all_calls]
+        summary_all = _build_call_logs_summary(results)
+
+        if status_filter:
+            results = [
+                row
+                for row in results
+                if str(row.get("status", "")).strip().lower().replace("_", "-") == status_filter
+            ]
+        if campaign_filter and not campaign_filter.isdigit():
+            campaign_name_filter = campaign_filter.strip().lower()
+            results = [
+                row
+                for row in results
+                if str(row.get("campaign_name", "")).strip().lower() == campaign_name_filter
+            ]
+        summary_filtered = _build_call_logs_summary(results)
+
+        count = len(results)
+        paged_results = results[offset : offset + page_size]
+
+        return JsonResponse(
+            {
+                "count": count,
+                "page": page,
+                "page_size": page_size,
+                "results": paged_results,
+                "summary": summary_filtered,
+                "summary_all": summary_all,
+            }
         )
-    if campaign_filter and campaign_filter.isdigit():
-        queryset = queryset.filter(campaign_id=int(campaign_filter))
-    if call_id_filter:
-        queryset = queryset.filter(id=call_id_filter)
-
-    # Frontend sends "initiated_at"; map to model fields.
-    if ordering in {"initiated_at", "created_at"}:
-        queryset = queryset.order_by("started_at", "created_at")
-    elif ordering in {"-initiated_at", "-created_at"}:
-        queryset = queryset.order_by("-started_at", "-created_at")
-    else:
-        queryset = queryset.order_by("-created_at")
-
-    all_calls = list(queryset)
-    offset = (page - 1) * page_size
-    page_calls = all_calls[offset : offset + page_size]
-
-    # Keep list endpoint fast and deterministic: do not sync provider on plain refresh
-    # unless caller explicitly asks for it.
-    sync_exotel = _parse_bool(request.GET.get("sync_exotel"), False)
-    if sync_exotel and page_calls:
-        _sync_exotel_call_details(page_calls, max_fetch=20)
-        for row in page_calls:
-            row.refresh_from_db()
-
-    results = [_serialize_call_log(call, include_raw=include_raw) for call in all_calls]
-    summary_all = _build_call_logs_summary(results)
-
-    if status_filter:
-        results = [
-            row
-            for row in results
-            if str(row.get("status", "")).strip().lower().replace("_", "-") == status_filter
-        ]
-    if campaign_filter and not campaign_filter.isdigit():
-        campaign_name_filter = campaign_filter.strip().lower()
-        results = [
-            row
-            for row in results
-            if str(row.get("campaign_name", "")).strip().lower() == campaign_name_filter
-        ]
-    summary_filtered = _build_call_logs_summary(results)
-
-    count = len(results)
-    paged_results = results[offset : offset + page_size]
-
-    return JsonResponse(
-        {
-            "count": count,
-            "page": page,
-            "page_size": page_size,
-            "results": paged_results,
-            "summary": summary_filtered,
-            "summary_all": summary_all,
-        }
-    )
+    except (ProgrammingError, OperationalError) as exc:
+        logger.exception("list_call_logs_failed: %s", exc)
+        empty_summary = _build_call_logs_summary([])
+        return JsonResponse(
+            {
+                "count": 0,
+                "page": page,
+                "page_size": page_size,
+                "results": [],
+                "summary": empty_summary,
+                "summary_all": empty_summary,
+                "warning": "call log data unavailable",
+            }
+        )
 
 
 @require_GET

@@ -30,7 +30,16 @@ INITIAL_USERS = [
 class Command(BaseCommand):
     help = "Create initial admin and agent users with AgentProfiles."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--reset-passwords",
+            action="store_true",
+            help="Reset passwords for existing initial users and reactivate them.",
+        )
+
     def handle(self, *args, **options):
+        reset_passwords = bool(options.get("reset_passwords"))
+
         for spec in INITIAL_USERS:
             user, created = User.objects.get_or_create(
                 username=spec["username"],
@@ -49,6 +58,18 @@ class Command(BaseCommand):
                 )
             else:
                 self.stdout.write(f"User already exists: {spec['username']}")
+                if reset_passwords:
+                    user.set_password(spec["password"])
+                    if not user.is_active:
+                        user.is_active = True
+                        user.save(update_fields=["password", "is_active"])
+                    else:
+                        user.save(update_fields=["password"])
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"Reset password for user: {spec['username']}"
+                        )
+                    )
 
             profile, p_created = AgentProfile.objects.get_or_create(
                 user=user,

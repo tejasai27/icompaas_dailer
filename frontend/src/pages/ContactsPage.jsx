@@ -2,16 +2,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
     Box, Card, Typography, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, Chip, InputAdornment, TextField, Pagination,
-    Button, Dialog, DialogTitle, DialogContent, DialogActions, Grid, IconButton, Tooltip, Checkbox
+    Button, IconButton, Tooltip, Checkbox
 } from '@mui/material';
 import { Add, Search, Edit, DeleteOutline } from '@mui/icons-material';
 import api from '../services/api';
 import toast from 'react-hot-toast';
-
-const STATUS_COLORS = {
-    pending: '#64748b', calling: '#3b82f6', answered: '#10b981',
-    'no-answer': '#f59e0b', no_answer: '#f59e0b', busy: '#f59e0b', failed: '#ef4444', completed: '#0142a2'
-};
+import { CALL_STATUS_COLORS as STATUS_COLORS } from '../lib/callStatus';
+import ContactFormDialog from '../components/ContactFormDialog';
 const PAGE_SIZE = 20;
 
 export default function ContactsPage() {
@@ -426,129 +423,27 @@ export default function ContactsPage() {
                 )}
             </Card>
 
-            <Dialog
+            <ContactFormDialog
                 open={createOpen}
-                onClose={() => !creating && setCreateOpen(false)}
-                fullWidth
-                maxWidth="sm"
-                PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}
-            >
-                <DialogTitle>Create Contact</DialogTitle>
-                <DialogContent>
-                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                        <Grid item xs={12}>
-                            <TextField
-                                fullWidth
-                                required
-                                label="Full Name"
-                                value={form.full_name}
-                                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                            />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                            <TextField
-                                fullWidth
-                                required
-                                label="Phone (E.164)"
-                                placeholder="+9199XXXXXXXX"
-                                value={form.phone_e164}
-                                onChange={(e) => setForm({ ...form, phone_e164: e.target.value })}
-                            />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                            <TextField
-                                fullWidth
-                                label="Email"
-                                value={form.email}
-                                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                            />
-                        </Grid>
-                        <Grid item xs={12}>
-                            <TextField
-                                fullWidth
-                                label="Company"
-                                value={form.company_name}
-                                onChange={(e) => setForm({ ...form, company_name: e.target.value })}
-                            />
-                        </Grid>
-                    </Grid>
-                </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
-                    <Button onClick={() => setCreateOpen(false)} disabled={creating}>
-                        Cancel
-                    </Button>
-                    <Button
-                        variant="contained"
-                        onClick={handleCreateContact}
-                        disabled={creating}
-                        sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
-                    >
-                        {creating ? 'Creating...' : 'Create'}
-                    </Button>
-                </DialogActions>
-            </Dialog>
+                onClose={() => setCreateOpen(false)}
+                title="Create Contact"
+                form={form}
+                onChange={setForm}
+                onSubmit={handleCreateContact}
+                submitting={creating}
+                submitLabel="Create"
+            />
 
-            <Dialog
+            <ContactFormDialog
                 open={editOpen}
-                onClose={() => !updating && setEditOpen(false)}
-                fullWidth
-                maxWidth="sm"
-                PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}
-            >
-                <DialogTitle>Update Contact</DialogTitle>
-                <DialogContent>
-                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                        <Grid item xs={12}>
-                            <TextField
-                                fullWidth
-                                required
-                                label="Full Name"
-                                value={editForm.full_name}
-                                onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
-                            />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                            <TextField
-                                fullWidth
-                                required
-                                label="Phone (E.164)"
-                                placeholder="+9199XXXXXXXX"
-                                value={editForm.phone_e164}
-                                onChange={(e) => setEditForm({ ...editForm, phone_e164: e.target.value })}
-                            />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                            <TextField
-                                fullWidth
-                                label="Email"
-                                value={editForm.email}
-                                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                            />
-                        </Grid>
-                        <Grid item xs={12}>
-                            <TextField
-                                fullWidth
-                                label="Company"
-                                value={editForm.company_name}
-                                onChange={(e) => setEditForm({ ...editForm, company_name: e.target.value })}
-                            />
-                        </Grid>
-                    </Grid>
-                </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
-                    <Button onClick={() => setEditOpen(false)} disabled={updating}>
-                        Cancel
-                    </Button>
-                    <Button
-                        variant="contained"
-                        onClick={handleUpdateContact}
-                        disabled={updating}
-                        sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}
-                    >
-                        {updating ? 'Updating...' : 'Update'}
-                    </Button>
-                </DialogActions>
-            </Dialog>
+                onClose={() => setEditOpen(false)}
+                title="Update Contact"
+                form={editForm}
+                onChange={setEditForm}
+                onSubmit={handleUpdateContact}
+                submitting={updating}
+                submitLabel="Update"
+            />
         </Box>
     );
 }

@@ -18,6 +18,7 @@ import { Backspace, Call, Contacts, Dialpad, Pause, PlayArrow, Refresh } from '@
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import toast from 'react-hot-toast';
+import { normalizeCallStatus, formatCallStatus, formatSeconds } from '../lib/callStatus';
 
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
@@ -35,6 +36,148 @@ function normalizePhone(value) {
         return `+${digits}`;
     }
     return digits ? `+${digits}` : '';
+}
+
+function CampaignQueuePanel({
+    campaign, campaignId, campaignQueue, loadingCampaign,
+    campaignActionLoading, reloadCampaignContext, runCampaignAction,
+    activeCall, waitingForPickup, pickupLeftSeconds, cooldownSeconds, lastCallStatus,
+}) {
+    if (!campaignId) return null;
+
+    return (
+        <Card sx={{ mb: 2 }}>
+            <CardContent>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                    <Typography variant="h6" fontWeight={600}>Campaign Queue</Typography>
+                    <Button
+                        size="small"
+                        startIcon={<Refresh fontSize="small" />}
+                        onClick={() => reloadCampaignContext(false)}
+                        disabled={campaignActionLoading}
+                    >
+                        Refresh
+                    </Button>
+                </Box>
+                {loadingCampaign ? (
+                    <CircularProgress size={20} />
+                ) : (
+                    <>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                            {campaign?.name || `Campaign ${campaignId}`} · Status: {campaign?.status || '-'}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                            Queue: {campaign?.pending_contacts ?? 0} pending, {campaign?.in_progress_contacts ?? 0} in progress
+                        </Typography>
+                        {campaign?.active_call_in_progress ? (
+                            waitingForPickup ? (
+                                <Typography variant="body2" sx={{ mb: 1.5, color: '#f59e0b' }}>
+                                    Customer not picking yet. Waiting {formatSeconds(pickupLeftSeconds)} before marking no-answer.
+                                </Typography>
+                            ) : (
+                                <Typography variant="body2" sx={{ mb: 1.5, color: '#10b981' }}>
+                                    SDR is in call{activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.
+                                </Typography>
+                            )
+                        ) : cooldownSeconds > 0 ? (
+                            lastCallStatus === 'no-answer' ? (
+                                <Typography variant="body2" sx={{ mb: 1.5, color: '#ef4444' }}>
+                                    Customer did not pick the call. Next call in {formatSeconds(cooldownSeconds)}.
+                                </Typography>
+                            ) : lastCallStatus === 'sdr-cut' ? (
+                                <Typography variant="body2" sx={{ mb: 1.5, color: '#ef4444' }}>
+                                    SDR cut the call. Next call in {formatSeconds(cooldownSeconds)}.
+                                </Typography>
+                            ) : (
+                                <Typography variant="body2" sx={{ mb: 1.5, color: '#f59e0b' }}>
+                                    Next call in {formatSeconds(cooldownSeconds)}
+                                </Typography>
+                            )
+                        ) : null}
+                        <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
+                            {campaign?.status === 'active' ? (
+                                <Button size="small" variant="outlined" startIcon={<Pause fontSize="small" />}
+                                    onClick={() => runCampaignAction('pause')} disabled={campaignActionLoading}>
+                                    Pause
+                                </Button>
+                            ) : campaign?.status === 'draft' || campaign?.status === 'paused' ? (
+                                <Button size="small" variant="contained" startIcon={<PlayArrow fontSize="small" />}
+                                    onClick={() => runCampaignAction(campaign?.status === 'draft' ? 'start' : 'resume')}
+                                    disabled={campaignActionLoading}>
+                                    {campaign?.status === 'draft' ? 'Start' : 'Resume'}
+                                </Button>
+                            ) : null}
+                            <Button size="small" variant="outlined"
+                                onClick={() => runCampaignAction('dispatch')}
+                                disabled={campaignActionLoading || campaign?.status !== 'active'}>
+                                Run Next
+                            </Button>
+                        </Box>
+                        <Box sx={{ display: 'grid', gap: 0.75, maxHeight: 180, overflowY: 'auto' }}>
+                            {campaignQueue.slice(0, 8).map((item) => (
+                                <Box key={item.id} sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(1,66,162,0.08)' }}>
+                                    <Typography fontSize="0.8rem" fontWeight={600}>{item.contact_name}</Typography>
+                                    <Typography fontSize="0.75rem" color="text.secondary">
+                                        {item.contact_phone} · {item.status} · tries {item.attempt_count}
+                                    </Typography>
+                                </Box>
+                            ))}
+                            {campaignQueue.length === 0 && (
+                                <Typography fontSize="0.8rem" color="text.secondary">Queue is empty.</Typography>
+                            )}
+                        </Box>
+                    </>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+function CallSettingsPanel({ agents, agentId, setAgentId, agentPhone, setAgentPhone, callerId, setCallerId, loadingAgents }) {
+    return (
+        <Card sx={{ mb: 2 }}>
+            <CardContent>
+                <Typography variant="h6" fontWeight={600} mb={2}>Call Settings</Typography>
+                <TextField fullWidth select label="SDR" value={agentId}
+                    onChange={(e) => setAgentId(e.target.value)} sx={{ mb: 2 }}
+                    helperText={loadingAgents ? 'Loading SDRs...' : `${agents.length} SDRs`}>
+                    {agents.map((agent) => (
+                        <MenuItem key={agent.id} value={String(agent.id)}>
+                            {agent.id} - {agent.display_name} ({agent.status})
+                        </MenuItem>
+                    ))}
+                </TextField>
+                <TextField fullWidth label="SDR Phone" value={agentPhone}
+                    onChange={(e) => setAgentPhone(e.target.value)} placeholder="+91XXXXXXXXXX" sx={{ mb: 2 }} />
+                <TextField fullWidth label="Caller ID (optional)" value={callerId}
+                    onChange={(e) => setCallerId(e.target.value)} placeholder="Exotel caller id" />
+            </CardContent>
+        </Card>
+    );
+}
+
+function LastCallPanel({ lastCall }) {
+    return (
+        <Card>
+            <CardContent>
+                <Typography variant="h6" fontWeight={600}>Last Call</Typography>
+                <Divider sx={{ my: 1.5, borderColor: 'rgba(1,66,162,0.12)' }} />
+                {lastCall ? (
+                    <Box sx={{ display: 'grid', gap: 1 }}>
+                        <Chip size="small" label={formatCallStatus(lastCall.status)}
+                            sx={{ width: 'fit-content', bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }} />
+                        <Typography variant="body2"><strong>ID:</strong> {lastCall.id}</Typography>
+                        <Typography variant="body2"><strong>Provider:</strong> {lastCall.provider}</Typography>
+                        <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
+                            <strong>Provider UUID:</strong> {lastCall.provider_call_uuid || '-'}
+                        </Typography>
+                    </Box>
+                ) : (
+                    <Typography variant="body2" color="text.secondary">No call started yet.</Typography>
+                )}
+            </CardContent>
+        </Card>
+    );
 }
 
 export default function DialPage() {
@@ -89,7 +232,7 @@ export default function DialPage() {
     }, []);
 
     useEffect(() => {
-        let mounted = true;
+        const controller = new AbortController();
         async function loadContacts() {
             setLoadingContacts(true);
             try {
@@ -100,8 +243,7 @@ export default function DialPage() {
                 if (campaignId) {
                     path += `&campaign=${encodeURIComponent(campaignId)}`;
                 }
-                const { data } = await api.get(path);
-                if (!mounted) return;
+                const { data } = await api.get(path, { signal: controller.signal });
                 const rows = Array.isArray(data.results) ? data.results : [];
                 setContacts(rows);
                 if (rows.length === 0) {
@@ -110,19 +252,16 @@ export default function DialPage() {
                     setSelectedContactId(String(rows[0].id));
                 }
             } catch (error) {
-                if (mounted) {
-                    toast.error(error.response?.data?.error || error.message || 'Failed to load contacts');
-                }
+                if (controller.signal.aborted) return;
+                toast.error(error.response?.data?.error || error.message || 'Failed to load contacts');
             } finally {
-                if (mounted) {
+                if (!controller.signal.aborted) {
                     setLoadingContacts(false);
                 }
             }
         }
         loadContacts();
-        return () => {
-            mounted = false;
-        };
+        return () => controller.abort();
     }, [contactSearch, campaignId]);
 
     async function reloadCampaignContext(showErrorToast = true, options = {}) {
@@ -187,25 +326,6 @@ export default function DialPage() {
 
         return () => clearInterval(timer);
     }, [campaign?.next_dispatch_at, campaign?.cooldown_remaining_seconds]);
-
-    function formatSeconds(total) {
-        const value = Math.max(0, Number(total || 0));
-        const minutes = Math.floor(value / 60);
-        const seconds = value % 60;
-        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-
-    const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
-    const formatCallStatus = (status) => {
-        const normalized = normalizeCallStatus(status);
-        if (!normalized) return '-';
-        if (normalized === 'sdr-cut') return 'SDR Cut the Call';
-        return normalized
-            .split('-')
-            .filter(Boolean)
-            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-            .join(' ');
-    };
 
     const activeCall = campaign?.active_call || null;
     const activeCallDisplayStatus = normalizeCallStatus(activeCall?.display_status || activeCall?.status);
@@ -494,177 +614,20 @@ export default function DialPage() {
                 </Grid>
 
                 <Grid item xs={12} md={5}>
-                    {campaignId ? (
-                        <Card sx={{ mb: 2 }}>
-                            <CardContent>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                                    <Typography variant="h6" fontWeight={600}>Campaign Queue</Typography>
-                                    <Button
-                                        size="small"
-                                        startIcon={<Refresh fontSize="small" />}
-                                        onClick={() => reloadCampaignContext(false)}
-                                        disabled={campaignActionLoading}
-                                    >
-                                        Refresh
-                                    </Button>
-                                </Box>
-                                {loadingCampaign ? (
-                                    <CircularProgress size={20} />
-                                ) : (
-                                    <>
-                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                                            {campaign?.name || `Campaign ${campaignId}`} · Status: {campaign?.status || '-'}
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                                            Queue: {campaign?.pending_contacts ?? 0} pending, {campaign?.in_progress_contacts ?? 0} in progress
-                                        </Typography>
-                                        {campaign?.active_call_in_progress ? (
-                                            waitingForPickup ? (
-                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#f59e0b' }}>
-                                                    Customer not picking yet. Waiting {formatSeconds(pickupLeftSeconds)} before marking no-answer.
-                                                </Typography>
-                                            ) : (
-                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#10b981' }}>
-                                                    SDR is in call{activeCall?.contact_name ? ` with ${activeCall.contact_name}` : ''}.
-                                                </Typography>
-                                            )
-                                        ) : cooldownSeconds > 0 ? (
-                                            lastCallStatus === 'no-answer' ? (
-                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#ef4444' }}>
-                                                    Customer did not pick the call. Next call in {formatSeconds(cooldownSeconds)}.
-                                                </Typography>
-                                            ) : lastCallStatus === 'sdr-cut' ? (
-                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#ef4444' }}>
-                                                    SDR cut the call. Next call in {formatSeconds(cooldownSeconds)}.
-                                                </Typography>
-                                            ) : (
-                                                <Typography variant="body2" sx={{ mb: 1.5, color: '#f59e0b' }}>
-                                                    Next call in {formatSeconds(cooldownSeconds)}
-                                                </Typography>
-                                            )
-                                        ) : null}
-                                        <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
-                                            {campaign?.status === 'active' ? (
-                                                <Button
-                                                    size="small"
-                                                    variant="outlined"
-                                                    startIcon={<Pause fontSize="small" />}
-                                                    onClick={() => runCampaignAction('pause')}
-                                                    disabled={campaignActionLoading}
-                                                >
-                                                    Pause
-                                                </Button>
-                                            ) : campaign?.status === 'draft' || campaign?.status === 'paused' ? (
-                                                <Button
-                                                    size="small"
-                                                    variant="contained"
-                                                    startIcon={<PlayArrow fontSize="small" />}
-                                                    onClick={() => runCampaignAction(campaign?.status === 'draft' ? 'start' : 'resume')}
-                                                    disabled={campaignActionLoading}
-                                                >
-                                                    {campaign?.status === 'draft' ? 'Start' : 'Resume'}
-                                                </Button>
-                                            ) : null}
-                                            <Button
-                                                size="small"
-                                                variant="outlined"
-                                                onClick={() => runCampaignAction('dispatch')}
-                                                disabled={campaignActionLoading || campaign?.status !== 'active'}
-                                            >
-                                                Run Next
-                                            </Button>
-                                        </Box>
-                                        <Box sx={{ display: 'grid', gap: 0.75, maxHeight: 180, overflowY: 'auto' }}>
-                                            {campaignQueue.slice(0, 8).map((item) => (
-                                                <Box key={item.id} sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(1,66,162,0.08)' }}>
-                                                    <Typography fontSize="0.8rem" fontWeight={600}>
-                                                        {item.contact_name}
-                                                    </Typography>
-                                                    <Typography fontSize="0.75rem" color="text.secondary">
-                                                        {item.contact_phone} · {item.status} · tries {item.attempt_count}
-                                                    </Typography>
-                                                </Box>
-                                            ))}
-                                            {campaignQueue.length === 0 ? (
-                                                <Typography fontSize="0.8rem" color="text.secondary">
-                                                    Queue is empty.
-                                                </Typography>
-                                            ) : null}
-                                        </Box>
-                                    </>
-                                )}
-                            </CardContent>
-                        </Card>
-                    ) : null}
-
-                    <Card sx={{ mb: 2 }}>
-                        <CardContent>
-                            <Typography variant="h6" fontWeight={600} mb={2}>
-                                Call Settings
-                            </Typography>
-                            <TextField
-                                fullWidth
-                                select
-                                label="SDR"
-                                value={agentId}
-                                onChange={(event) => setAgentId(event.target.value)}
-                                sx={{ mb: 2 }}
-                                helperText={loadingAgents ? 'Loading SDRs...' : `${agents.length} SDRs`}
-                            >
-                                {agents.map((agent) => (
-                                    <MenuItem key={agent.id} value={String(agent.id)}>
-                                        {agent.id} - {agent.display_name} ({agent.status})
-                                    </MenuItem>
-                                ))}
-                            </TextField>
-                            <TextField
-                                fullWidth
-                                label="SDR Phone"
-                                value={agentPhone}
-                                onChange={(event) => setAgentPhone(event.target.value)}
-                                placeholder="+91XXXXXXXXXX"
-                                sx={{ mb: 2 }}
-                            />
-                            <TextField
-                                fullWidth
-                                label="Caller ID (optional)"
-                                value={callerId}
-                                onChange={(event) => setCallerId(event.target.value)}
-                                placeholder="Exotel caller id"
-                            />
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardContent>
-                            <Typography variant="h6" fontWeight={600}>
-                                Last Call
-                            </Typography>
-                            <Divider sx={{ my: 1.5, borderColor: 'rgba(1,66,162,0.12)' }} />
-                            {lastCall ? (
-                                <Box sx={{ display: 'grid', gap: 1 }}>
-                                    <Chip
-                                        size="small"
-                                        label={formatCallStatus(lastCall.status)}
-                                        sx={{ width: 'fit-content', bgcolor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }}
-                                    />
-                                    <Typography variant="body2">
-                                        <strong>ID:</strong> {lastCall.id}
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        <strong>Provider:</strong> {lastCall.provider}
-                                    </Typography>
-                                    <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
-                                        <strong>Provider UUID:</strong> {lastCall.provider_call_uuid || '-'}
-                                    </Typography>
-                                </Box>
-                            ) : (
-                                <Typography variant="body2" color="text.secondary">
-                                    No call started yet.
-                                </Typography>
-                            )}
-                        </CardContent>
-                    </Card>
+                    <CampaignQueuePanel
+                        campaign={campaign} campaignId={campaignId} campaignQueue={campaignQueue}
+                        loadingCampaign={loadingCampaign} campaignActionLoading={campaignActionLoading}
+                        reloadCampaignContext={reloadCampaignContext} runCampaignAction={runCampaignAction}
+                        activeCall={activeCall} waitingForPickup={waitingForPickup}
+                        pickupLeftSeconds={pickupLeftSeconds} cooldownSeconds={cooldownSeconds}
+                        lastCallStatus={lastCallStatus}
+                    />
+                    <CallSettingsPanel
+                        agents={agents} agentId={agentId} setAgentId={setAgentId}
+                        agentPhone={agentPhone} setAgentPhone={setAgentPhone}
+                        callerId={callerId} setCallerId={setCallerId} loadingAgents={loadingAgents}
+                    />
+                    <LastCallPanel lastCall={lastCall} />
                 </Grid>
             </Grid>
         </Box>

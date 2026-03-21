@@ -127,6 +127,25 @@ CORS_ALLOWED_ORIGINS = env_list(
 )
 CORS_ALLOW_ALL_ORIGINS = env_bool("DJANGO_CORS_ALLOW_ALL_ORIGINS", False)
 CORS_ALLOW_CREDENTIALS = True
+
+# ── Auth cookie settings ──────────────────────────────────────────
+# Set to False to bypass auth enforcement (dev/demo mode)
+AUTH_ENFORCEMENT_ENABLED = env_bool("AUTH_ENFORCEMENT_ENABLED", False)
+
+AUTH_COOKIE_SECURE = not DEBUG  # True in production (HTTPS only)
+AUTH_COOKIE_SAMESITE = "Lax"
+AUTH_COOKIE_HTTPONLY = True
+AUTH_COOKIE_PATH = "/"
+AUTH_ACCESS_COOKIE = "access_token"
+AUTH_REFRESH_COOKIE = "refresh_token"
+
+CSRF_COOKIE_HTTPONLY = False  # JS needs to read CSRF token
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_TRUSTED_ORIGINS = env_list(
+    "DJANGO_CSRF_TRUSTED_ORIGINS",
+    "http://localhost:5174,http://localhost:5173",
+)
 PUBLIC_WEBHOOK_BASE_URL = os.getenv("PUBLIC_WEBHOOK_BASE_URL", "").strip()
 
 EXOTEL_MAX_CALL_DURATION_SECONDS = env_int("EXOTEL_MAX_CALL_DURATION_SECONDS", 0)

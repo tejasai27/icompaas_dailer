@@ -12,11 +12,21 @@ export default function LoginPage() {
     const [form, setForm] = useState({ username: '', password: '' });
     const [showPw, setShowPw] = useState(false);
     const [loading, setLoading] = useState(false);
-    const { login } = useAuth();
+    const { user, login } = useAuth();
     const navigate = useNavigate();
+
+    // Redirect to dashboard if already logged in
+    React.useEffect(() => {
+        if (user) navigate('/dashboard', { replace: true });
+    }, [user, navigate]);
+
+    const usernameValid = form.username.trim().length >= 1;
+    const passwordValid = form.password.length >= 1;
+    const canSubmit = usernameValid && passwordValid && !loading;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!canSubmit) return;
         setLoading(true);
         try {
             await login(form.username, form.password);
@@ -95,6 +105,8 @@ export default function LoginPage() {
                             label="Username"
                             value={form.username}
                             onChange={e => setForm({ ...form, username: e.target.value })}
+                            error={form.username.length > 0 && !usernameValid}
+                            helperText={form.username.length > 0 && !usernameValid ? 'Username is required' : ''}
                             InputProps={{
                                 startAdornment: (
                                     <InputAdornment position="start">
@@ -111,6 +123,8 @@ export default function LoginPage() {
                             type={showPw ? 'text' : 'password'}
                             value={form.password}
                             onChange={e => setForm({ ...form, password: e.target.value })}
+                            error={form.password.length > 0 && !passwordValid}
+                            helperText={form.password.length > 0 && !passwordValid ? 'Password is required' : ''}
                             InputProps={{
                                 startAdornment: (
                                     <InputAdornment position="start">
@@ -119,7 +133,7 @@ export default function LoginPage() {
                                 ),
                                 endAdornment: (
                                     <InputAdornment position="end">
-                                        <IconButton size="small" onClick={() => setShowPw(!showPw)}>
+                                        <IconButton size="small" onClick={() => setShowPw(!showPw)} aria-label={showPw ? 'Hide password' : 'Show password'}>
                                             {showPw ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
                                         </IconButton>
                                     </InputAdornment>
@@ -133,7 +147,7 @@ export default function LoginPage() {
                             type="submit"
                             variant="contained"
                             size="large"
-                            disabled={loading}
+                            disabled={!canSubmit}
                             sx={{
                                 py: 1.5,
                                 bgcolor: '#0142a2',

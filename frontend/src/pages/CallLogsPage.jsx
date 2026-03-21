@@ -1,30 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import {
-    Box, Card, CardContent, Typography, Table, TableBody, TableCell,
+    Box, Card, Typography, Table, TableBody, TableCell,
     TableContainer, TableHead, TableRow, Chip, IconButton, Tooltip,
-    Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField,
-    Select, MenuItem, FormControl, InputLabel, Grid, Pagination, InputAdornment
+    Button, TextField, Select, MenuItem, FormControl, InputLabel,
+    Pagination, InputAdornment, Skeleton
 } from '@mui/material';
 import { Search, Mic, Sync } from '@mui/icons-material';
 import api from '../services/api';
 import toast from 'react-hot-toast';
-
-const CALL_COLORS = {
-    answered: '#10b981', 'sdr-cut': '#ef4444', 'no-answer': '#f59e0b', busy: '#f59e0b',
-    failed: '#ef4444', completed: '#0142a2', initiated: '#3b82f6', cancelled: '#64748b'
-};
-
-const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
-const formatCallStatus = (status) => {
-    const normalized = normalizeCallStatus(status);
-    if (!normalized) return '-';
-    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
-    return normalized
-        .split('-')
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
-};
+import { CALL_STATUS_COLORS as CALL_COLORS, normalizeCallStatus, formatCallStatus } from '../lib/callStatus';
+import CallDetailDialog from '../components/CallDetailDialog';
 const normalizeHubspotSyncStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
 const isHubspotSynced = (log) => {
     const status = normalizeHubspotSyncStatus(log?.hubspot_sync_status);
@@ -149,7 +134,20 @@ export default function CallLogsPage() {
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {logs.map(log => {
+                            {loading ? Array.from({ length: 5 }).map((_, i) => (
+                                <TableRow key={i}>
+                                    {Array.from({ length: 10 }).map((_, j) => (
+                                        <TableCell key={j}><Skeleton /></TableCell>
+                                    ))}
+                                </TableRow>
+                            )) : logs.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={10} align="center" sx={{ py: 4, color: '#64748b' }}>
+                                        No call logs found
+                                    </TableCell>
+                                </TableRow>
+                            ) : null}
+                            {!loading && logs.map(log => {
                                 const statusKey = normalizeCallStatus(log.status);
                                 const hubspotSynced = isHubspotSynced(log);
                                 return (
@@ -239,77 +237,19 @@ export default function CallLogsPage() {
                 )}
             </Card>
 
-            {/* Detail dialog */}
-            {selected && (
-                <Dialog open onClose={() => setSelected(null)} maxWidth="sm" fullWidth
-                    PaperProps={{ sx: { bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.2)' } }}>
-                    <DialogTitle>
-                        <Box>
-                            <Typography fontWeight={700}>{selected.contact_name}</Typography>
-                            <Typography variant="caption" color="text.secondary">{selected.contact_phone}</Typography>
-                        </Box>
-                    </DialogTitle>
-                    <DialogContent>
-                        <Grid container spacing={2} sx={{ mb: 2 }}>
-                            {[
-                                { label: 'Status', value: formatCallStatus(selected.status) },
-                                { label: 'Duration', value: selected.duration_formatted },
-                                { label: 'SDR', value: selected.agent_name },
-                                { label: 'Campaign', value: selected.campaign_name },
-                                { label: 'Outcome', value: selected.call_outcome || '-' },
-                                { label: 'Date', value: new Date(selected.initiated_at).toLocaleString() },
-                                { label: 'Deal ID', value: selected.deal_id || '-' },
-                                { label: 'Deal Name', value: selected.deal_name || '-' },
-                                { label: 'HubSpot Sync', value: isHubspotSynced(selected) ? 'Yes' : 'No' },
-                                { label: 'HubSpot Sync Status', value: selected.hubspot_sync_status || '-' },
-                                { label: 'HubSpot Task ID', value: selected.hubspot_task_object_id || '-' },
-                            ].map(({ label, value }) => (
-                                <Grid item xs={6} key={label}>
-                                    <Typography variant="caption" color="text.secondary">{label}</Typography>
-                                    <Typography fontWeight={500} fontSize="0.9rem">{value}</Typography>
-                                </Grid>
-                            ))}
-                        </Grid>
-                        {selected.recording_url && (
-                            <Box sx={{ mt: 2 }}>
-                                <Typography variant="subtitle2" fontWeight={600} mb={1}>Recording</Typography>
-                                <audio controls preload="none" src={selected.recording_url} style={{ width: '100%' }} />
-                            </Box>
-                        )}
-                        <Box sx={{ mt: 2 }}>
-                            <Typography variant="subtitle2" fontWeight={600} mb={1}>Notes</Typography>
-                            <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.05)' }}>
-                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
-                                    {selected.agent_notes || 'No notes added.'}
-                                </Typography>
-                            </Box>
-                        </Box>
-                        {selected.transcript && (
-                            <Box sx={{ mt: 2 }}>
-                                <Typography variant="subtitle2" fontWeight={600} mb={1}>📝 Transcript</Typography>
-                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.05)', maxHeight: 300, overflow: 'auto' }}>
-                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-                                        {selected.transcript}
-                                    </Typography>
-                                </Box>
-                            </Box>
-                        )}
-                        {!selected.transcript && selected.transcript_error && (
-                            <Box sx={{ mt: 2 }}>
-                                <Typography variant="subtitle2" fontWeight={600} mb={1}>Transcript</Typography>
-                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(239,68,68,0.08)' }}>
-                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7, color: '#b91c1c' }}>
-                                        {selected.transcript_error}
-                                    </Typography>
-                                </Box>
-                            </Box>
-                        )}
-                    </DialogContent>
-                    <DialogActions>
-                        <Button onClick={() => setSelected(null)}>Close</Button>
-                    </DialogActions>
-                </Dialog>
-            )}
+            <CallDetailDialog
+                call={selected}
+                onClose={() => setSelected(null)}
+                extraFields={selected ? [
+                    { label: 'Campaign', value: selected.campaign_name || '-' },
+                    { label: 'Outcome', value: selected.call_outcome || '-' },
+                    { label: 'Deal ID', value: selected.deal_id || '-' },
+                    { label: 'Deal Name', value: selected.deal_name || '-' },
+                    { label: 'HubSpot Sync', value: isHubspotSynced(selected) ? 'Yes' : 'No' },
+                    { label: 'HubSpot Sync Status', value: selected.hubspot_sync_status || '-' },
+                    { label: 'HubSpot Task ID', value: selected.hubspot_task_object_id || '-' },
+                ] : undefined}
+            />
         </Box>
     );
 }

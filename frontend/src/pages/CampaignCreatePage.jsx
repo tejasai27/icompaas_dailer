@@ -24,6 +24,7 @@ import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { parseManualLeads } from '../lib/parseLeads';
 
 const STEPS = ['Dialing Mode', 'Campaign Details', 'Add Contacts', 'Review'];
 
@@ -74,6 +75,10 @@ function DialingModeStep({ mode, onChange }) {
 }
 
 function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
+    const nameError = details.name !== undefined && !details.name.trim() ? 'Campaign name is required' : '';
+    const phoneError = details.agent_phone !== undefined && details.agent_phone && !/^\+[1-9]\d{6,14}$/.test(details.agent_phone.trim())
+        ? 'Use E.164 format (e.g. +919999999999)' : '';
+
     return (
         <Box>
             <Typography variant="h6" fontWeight={600} mb={1}>Campaign Details</Typography>
@@ -87,6 +92,8 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                         label="Campaign Name *"
                         value={details.name}
                         onChange={(e) => onChange({ ...details, name: e.target.value })}
+                        error={Boolean(nameError)}
+                        helperText={nameError}
                     />
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -129,6 +136,8 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
                         value={details.agent_phone}
                         onChange={(e) => onChange({ ...details, agent_phone: e.target.value })}
                         placeholder="+91XXXXXXXXXX"
+                        error={Boolean(phoneError)}
+                        helperText={phoneError}
                     />
                 </Grid>
                 <Grid item xs={12}>
@@ -163,18 +172,6 @@ function CampaignDetailsStep({ details, onChange, agents, loadingAgents }) {
             </Grid>
         </Box>
     );
-}
-
-function parseManualLeads(text) {
-    return text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-            const [first = '', second = ''] = line.split(',').map((value) => value.trim());
-            if (second) return { full_name: first, phone_e164: second };
-            return { phone_e164: first };
-        });
 }
 
 function AddContactsStep({
@@ -319,16 +316,20 @@ export default function CampaignCreatePage() {
     const [loadingAgents, setLoadingAgents] = useState(true);
 
     useEffect(() => {
-        let mounted = true;
-        api.get('/agents/')
+        const controller = new AbortController();
+        api.get('/agents/', { signal: controller.signal })
             .then((res) => {
-                if (!mounted) return;
                 const list = Array.isArray(res.data?.agents) ? res.data.agents : [];
                 setAgents(list);
             })
-            .catch(() => toast.error('Unable to fetch SDRs'))
-            .finally(() => mounted && setLoadingAgents(false));
-        return () => { mounted = false; };
+            .catch((err) => {
+                if (controller.signal.aborted) return;
+                toast.error('Unable to fetch SDRs');
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setLoadingAgents(false);
+            });
+        return () => controller.abort();
     }, []);
 
     const canProceed = () => {

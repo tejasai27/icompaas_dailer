@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import AuthContext from './authContext';
 import api from '../services/api';
 
@@ -6,43 +6,34 @@ export default function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
+    // Fetch current user from /auth/me/ (cookie-based auth)
+    const fetchUser = useCallback(async () => {
         try {
-            const token = localStorage.getItem('access_token');
-            const savedUser = localStorage.getItem('user');
-            if (token && savedUser) {
-                const parsedUser = JSON.parse(savedUser);
-                if (parsedUser && typeof parsedUser === 'object') {
-                    setUser(parsedUser);
-                } else {
-                    localStorage.removeItem('user');
-                    setUser(null);
-                }
-            } else {
-                setUser(null);
-            }
+            const { data } = await api.get('/auth/me/');
+            setUser(data.user);
         } catch {
-            localStorage.removeItem('user');
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('refresh_token');
             setUser(null);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     }, []);
+
+    useEffect(() => {
+        fetchUser();
+    }, [fetchUser]);
 
     const login = async (username, password) => {
         const { data } = await api.post('/auth/login/', { username, password });
-        localStorage.setItem('access_token', data.access);
-        localStorage.setItem('refresh_token', data.refresh);
-        localStorage.setItem('user', JSON.stringify(data.user));
         setUser(data.user);
         return data.user;
     };
 
-    const logout = () => {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user');
+    const logout = async () => {
+        try {
+            await api.post('/auth/logout/');
+        } catch {
+            // Even if logout API fails, clear local state
+        }
         setUser(null);
     };
 

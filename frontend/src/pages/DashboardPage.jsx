@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import api from '../services/api';
 import useAuth from '../context/useAuth';
+import { CALL_STATUS_COLORS, normalizeCallStatus, formatCallStatus } from '../lib/callStatus';
 
 const StatCard = ({ title, value, icon, color, subtitle, loading }) => (
     <Card sx={{ height: '100%' }}>
@@ -37,29 +38,7 @@ const StatCard = ({ title, value, icon, color, subtitle, loading }) => (
     </Card>
 );
 
-const callStatusColors = {
-    answered: '#10b981',
-    'sdr-cut': '#ef4444',
-    'no-answer': '#f59e0b',
-    no_answer: '#f59e0b',
-    busy: '#f59e0b',
-    failed: '#ef4444',
-    completed: '#0142a2',
-    initiated: '#3b82f6',
-    cancelled: '#64748b',
-};
-
-const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
-const formatCallStatus = (status) => {
-    const normalized = normalizeCallStatus(status);
-    if (!normalized) return '-';
-    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
-    return normalized
-        .split('-')
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
-};
+const callStatusColors = CALL_STATUS_COLORS;
 
 const initialStats = {
     total_calls: 0,

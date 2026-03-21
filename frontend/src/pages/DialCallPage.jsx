@@ -25,6 +25,7 @@ import {
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { normalizeCallStatus, formatCallStatus, formatSeconds } from '../lib/callStatus';
 
 const OUTCOME_OPTIONS = [
     { value: 'connected', label: 'Connected' },
@@ -37,28 +38,6 @@ const OUTCOME_OPTIONS = [
     { value: 'not_interested', label: 'Not Interested' },
     { value: 'follow_up', label: 'Follow Up' },
 ];
-
-function formatSeconds(total) {
-    const value = Math.max(0, Number(total || 0));
-    const minutes = Math.floor(value / 60);
-    const seconds = value % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
-
-function normalizeCallStatus(status) {
-    return String(status || '').trim().toLowerCase().replace(/_/g, '-');
-}
-
-function formatCallStatus(status) {
-    const normalized = normalizeCallStatus(status);
-    if (!normalized) return '-';
-    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
-    return normalized
-        .split('-')
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
-}
 
 export default function DialCallPage() {
     const navigate = useNavigate();

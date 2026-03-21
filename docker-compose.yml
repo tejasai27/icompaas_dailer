@@ -102,7 +102,8 @@ services:
     build:
       context: ./frontend
     restart: unless-stopped
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    user: "0:0"
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
     environment:
       VITE_PROXY_TARGET: http://backend:8000
       NODE_OPTIONS: "--max-old-space-size=768"

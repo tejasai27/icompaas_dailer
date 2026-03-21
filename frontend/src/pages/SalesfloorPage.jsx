@@ -2,40 +2,60 @@ import React, { useEffect, useState } from 'react';
 import {
     Box, Card, CardContent, Typography, Grid, Chip, Avatar,
     Button, Divider, TextField, Alert, List, ListItem,
-    ListItemAvatar, ListItemText, Switch, FormControlLabel
+    ListItemAvatar, ListItemText, Switch, FormControlLabel, Skeleton
 } from '@mui/material';
 import { Phone, Headphones, Circle, PlayArrow, Stop, Timer } from '@mui/icons-material';
 import api from '../services/api';
 import useAuth from '../context/useAuth';
-
-const normalizeCallStatus = (status) => String(status || '').trim().toLowerCase().replace(/_/g, '-');
-const formatCallStatus = (status) => {
-    const normalized = normalizeCallStatus(status);
-    if (!normalized) return '-';
-    if (normalized === 'sdr-cut') return 'SDR Cut the Call';
-    return normalized
-        .split('-')
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
-};
+import toast from 'react-hot-toast';
+import { normalizeCallStatus, formatCallStatus } from '../lib/callStatus';
 
 export default function SalesfloorPage() {
     const [campaigns, setCampaigns] = useState([]);
     const [recentCalls, setRecentCalls] = useState([]);
     const [available, setAvailable] = useState(true);
+    const [loading, setLoading] = useState(true);
     const { user } = useAuth();
 
     useEffect(() => {
-        api.get('/campaigns/?status=active').then(r => setCampaigns(r.data.results || r.data));
-        api.get('/call-logs/?ordering=-initiated_at').then(r => setRecentCalls((r.data.results || r.data).slice(0, 10)));
+        let mounted = true;
+
+        async function fetchData() {
+            try {
+                const [campaignsRes, callsRes] = await Promise.allSettled([
+                    api.get('/campaigns/?status=active'),
+                    api.get('/call-logs/?ordering=-initiated_at'),
+                ]);
+
+                if (!mounted) return;
+
+                if (campaignsRes.status === 'fulfilled') {
+                    setCampaigns(campaignsRes.value.data.results || campaignsRes.value.data || []);
+                }
+                if (callsRes.status === 'fulfilled') {
+                    const rows = callsRes.value.data.results || callsRes.value.data || [];
+                    setRecentCalls(rows.slice(0, 10));
+                }
+            } catch {
+                if (mounted) toast.error('Failed to load salesfloor data');
+            } finally {
+                if (mounted) setLoading(false);
+            }
+        }
+
+        fetchData();
+        return () => { mounted = false; };
     }, []);
 
     const toggleAvailability = async () => {
+        const prev = available;
+        setAvailable(!prev); // Optimistic update
         try {
-            await api.patch('/auth/users/update_availability/', { is_available: !available });
-            setAvailable(!available);
-        } catch (e) { }
+            await api.patch('/auth/users/update_availability/', { is_available: !prev });
+        } catch {
+            setAvailable(prev); // Revert on failure
+            toast.error('Failed to update availability');
+        }
     };
 
     return (
@@ -89,7 +109,9 @@ export default function SalesfloorPage() {
                     <Card>
                         <CardContent>
                             <Typography variant="subtitle1" fontWeight={600} mb={2}>⚡ Active Campaigns</Typography>
-                            {campaigns.length === 0 ? (
+                            {loading ? (
+                                <Box>{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} height={80} sx={{ mb: 1 }} />)}</Box>
+                            ) : campaigns.length === 0 ? (
                                 <Box sx={{ textAlign: 'center', py: 4, color: '#64748b' }}>
                                     <Headphones sx={{ fontSize: 48, mb: 1 }} />
                                     <Typography>No active campaigns right now</Typography>
@@ -133,6 +155,9 @@ export default function SalesfloorPage() {
                     <Card>
                         <CardContent>
                             <Typography variant="subtitle1" fontWeight={600} mb={2}>📞 Live Call Feed</Typography>
+                            {loading ? (
+                                <Box>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={56} sx={{ mb: 1 }} />)}</Box>
+                            ) : (
                             <List disablePadding>
                                 {recentCalls.map(call => {
                                     const statusKey = normalizeCallStatus(call.status);
@@ -162,6 +187,7 @@ export default function SalesfloorPage() {
                                     </ListItem>
                                 )})}
                             </List>
+                            )}
                         </CardContent>
                     </Card>
                 </Grid>

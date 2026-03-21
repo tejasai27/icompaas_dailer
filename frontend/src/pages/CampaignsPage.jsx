@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     Box,
     Button,
@@ -27,14 +27,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import toast from 'react-hot-toast';
-
-const STATUS_COLORS = {
-    active: { bg: '#10b98125', text: '#10b981', label: 'Active' },
-    paused: { bg: '#f59e0b25', text: '#f59e0b', label: 'Paused' },
-    completed: { bg: '#0142a225', text: '#0142a2', label: 'Completed' },
-    draft: { bg: '#64748b25', text: '#94a3b8', label: 'Draft' },
-    archived: { bg: '#37415125', text: '#94a3b8', label: 'Archived' },
-};
+import { CAMPAIGN_STATUS_COLORS as STATUS_COLORS } from '../lib/callStatus';
 
 const MODE_LABELS = {
     power: '⚡ Power',
@@ -295,6 +288,8 @@ export default function CampaignsPage() {
     const [viewMode, setViewMode] = useState(() => localStorage.getItem('campaigns_view_mode') || 'grid');
     const [deletingCampaignId, setDeletingCampaignId] = useState(null);
     const navigate = useNavigate();
+    const campaignsRef = useRef(campaigns);
+    const fetchCampaignsRef = useRef(null);
 
     const fetchCampaigns = async ({ silent = false } = {}) => {
         try {
@@ -326,23 +321,26 @@ export default function CampaignsPage() {
         localStorage.setItem('campaigns_view_mode', viewMode);
     }, [viewMode]);
 
-    useEffect(() => {
-        const hasActive = campaigns.some((campaign) => campaign.status === 'active');
-        if (!hasActive) return undefined;
+    // Keep refs up to date without recreating the interval
+    useEffect(() => { campaignsRef.current = campaigns; }, [campaigns]);
+    useEffect(() => { fetchCampaignsRef.current = fetchCampaigns; });
 
+    // Stable interval — reads campaign IDs from ref, never re-creates
+    useEffect(() => {
         const timer = setInterval(async () => {
-            const activeIds = campaigns
-                .filter((campaign) => campaign.status === 'active')
-                .map((campaign) => campaign.id)
+            const activeIds = campaignsRef.current
+                .filter((c) => c.status === 'active')
+                .map((c) => c.id)
                 .filter(Boolean);
+            if (activeIds.length === 0) return;
             await Promise.allSettled(
-                activeIds.map((campaignId) => api.post(`/campaigns/${campaignId}/tick/`))
+                activeIds.map((id) => api.post(`/campaigns/${id}/tick/`))
             );
-            fetchCampaigns({ silent: true });
+            fetchCampaignsRef.current?.({ silent: true });
         }, 5000);
 
         return () => clearInterval(timer);
-    }, [campaigns]);
+    }, []);
 
     const handleCampaignAction = async (campaign, action) => {
         try {
