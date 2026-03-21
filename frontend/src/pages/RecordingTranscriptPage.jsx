@@ -1,42 +1,33 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Alert,
-    Box,
-    Button,
-    Card,
-    CardContent,
-    Chip,
-    CircularProgress,
-    Divider,
-    LinearProgress,
-    Typography,
+    Alert, Avatar, Box, Button, Card, CardContent, Chip, CircularProgress,
+    Divider, Grid, IconButton, InputAdornment, LinearProgress, TextField,
+    Tooltip, Typography,
 } from '@mui/material';
-import { ArrowBack, GraphicEq, Mic } from '@mui/icons-material';
+import {
+    ArrowBack, FastForward, FastRewind, GraphicEq, Mic, Person,
+    Search, Speed,
+} from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { resolveMediaUrl } from '../lib/mediaUrl';
 import { formatSeconds as formatTime } from '../lib/callStatus';
+import { shortDateTime } from '../lib/formatDate';
 
 function formatTranscriptStage(stage) {
     const value = String(stage || '').trim().toLowerCase().replace(/_/g, ' ');
     if (!value) return '';
-    if (value === 'queued') return 'Queued';
-    if (value === 'preparing audio') return 'Preparing audio';
-    if (value === 'downloading audio') return 'Downloading audio';
-    if (value === 'uploading audio') return 'Uploading audio';
-    if (value === 'transcribing') return 'Transcribing';
-    if (value === 'saving') return 'Saving transcript';
-    if (value === 'finalizing') return 'Finalizing';
-    if (value === 'completed') return 'Completed';
-    if (value === 'failed') return 'Failed';
     return value.charAt(0).toUpperCase() + value.slice(1);
 }
+
+const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 
 export default function RecordingTranscriptPage() {
     const navigate = useNavigate();
     const { recordingPublicId } = useParams();
     const audioRef = useRef(null);
+    const activeSegmentRef = useRef(null);
 
     const [loading, setLoading] = useState(true);
     const [transcribing, setTranscribing] = useState(false);
@@ -44,6 +35,9 @@ export default function RecordingTranscriptPage() {
     const [recording, setRecording] = useState(null);
     const [currentTime, setCurrentTime] = useState(0);
     const [currentSegmentIndex, setCurrentSegmentIndex] = useState(-1);
+    const [playbackSpeed, setPlaybackSpeed] = useState(1);
+    const [transcriptSearch, setTranscriptSearch] = useState('');
+    const pollErrorCount = useRef(0);
 
     const segments = useMemo(() => {
         const raw = recording?.transcript_segments;
@@ -52,73 +46,66 @@ export default function RecordingTranscriptPage() {
 
     const hasTranscript = Boolean((recording?.transcript_text || '').trim());
     const transcriptStatus = String(recording?.transcript_status || '').toLowerCase();
-    const transcriptProgressPercent = Math.max(
-        0,
-        Math.min(100, Number(recording?.transcript_progress_percent ?? (transcriptStatus === 'completed' ? 100 : 0))),
-    );
+    const transcriptProgressPercent = Math.max(0, Math.min(100, Number(recording?.transcript_progress_percent ?? (transcriptStatus === 'completed' ? 100 : 0))));
     const transcriptProgressStage = formatTranscriptStage(recording?.transcript_progress_stage || transcriptStatus);
 
-    const pollErrorCount = useRef(0);
+    const filteredSegments = useMemo(() => {
+        if (!transcriptSearch.trim()) return segments;
+        const q = transcriptSearch.toLowerCase();
+        return segments.filter((s) => String(s.text || '').toLowerCase().includes(q));
+    }, [segments, transcriptSearch]);
 
     const loadRecording = async ({ silent = false } = {}) => {
         if (!recordingPublicId) return;
-        if (!silent) {
-            setLoading(true);
-        }
+        if (!silent) setLoading(true);
         try {
             const { data } = await api.get(`/recordings/${recordingPublicId}/`);
             setRecording(data?.recording || null);
             pollErrorCount.current = 0;
         } catch (error) {
             pollErrorCount.current += 1;
-            if (!silent) {
-                toast.error(error?.response?.data?.error || 'Failed to load recording');
-            }
+            if (!silent) toast.error(error?.response?.data?.error || 'Failed to load recording');
         } finally {
-            if (!silent) {
-                setLoading(false);
-            }
+            if (!silent) setLoading(false);
         }
     };
 
-    useEffect(() => {
-        loadRecording();
-    }, [recordingPublicId]);
+    useEffect(() => { loadRecording(); }, [recordingPublicId]);
 
     useEffect(() => {
-        if (!recordingPublicId) return undefined;
-        if (String(recording?.transcript_status || '').toLowerCase() !== 'processing') return undefined;
+        if (!recordingPublicId || transcriptStatus !== 'processing') return undefined;
         const interval = setInterval(() => {
-            if (pollErrorCount.current >= 5) {
-                clearInterval(interval);
-                return;
-            }
+            if (pollErrorCount.current >= 5) { clearInterval(interval); return; }
             loadRecording({ silent: true });
         }, 5000);
         return () => clearInterval(interval);
-    }, [recordingPublicId, recording?.transcript_status]);
+    }, [recordingPublicId, transcriptStatus]);
 
     useEffect(() => {
         if (!transcribing || !trackUntilComplete) return;
-        const status = String(recording?.transcript_status || '').toLowerCase();
-        if (status && status !== 'processing') {
+        if (transcriptStatus && transcriptStatus !== 'processing') {
             setTranscribing(false);
             setTrackUntilComplete(false);
         }
-    }, [recording?.transcript_status, transcribing, trackUntilComplete]);
+    }, [transcriptStatus, transcribing, trackUntilComplete]);
 
     useEffect(() => {
-        if (!segments.length) {
-            setCurrentSegmentIndex(-1);
-            return;
-        }
-        const index = segments.findIndex((segment) => {
-            const start = Number(segment?.start || 0);
-            const end = Number(segment?.end ?? start + 1);
-            return currentTime >= start && currentTime < end;
-        });
+        if (!segments.length) { setCurrentSegmentIndex(-1); return; }
+        const index = segments.findIndex((s) => currentTime >= Number(s?.start || 0) && currentTime < Number(s?.end ?? Number(s?.start || 0) + 1));
         setCurrentSegmentIndex(index);
     }, [currentTime, segments]);
+
+    // Auto-scroll to active segment
+    useEffect(() => {
+        if (activeSegmentRef.current) {
+            activeSegmentRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }, [currentSegmentIndex]);
+
+    // Playback speed
+    useEffect(() => {
+        if (audioRef.current) audioRef.current.playbackRate = playbackSpeed;
+    }, [playbackSpeed]);
 
     const runTranscription = async () => {
         if (!recordingPublicId) return;
@@ -126,187 +113,210 @@ export default function RecordingTranscriptPage() {
         setTrackUntilComplete(false);
         try {
             const { data } = await api.post(`/recordings/${recordingPublicId}/transcribe/`, { language: 'auto' });
-            const nextRecording = data?.recording || null;
-            setRecording(nextRecording);
-            const nextStatus = String(nextRecording?.transcript_status || '').toLowerCase();
-            if (data?.queued || nextStatus === 'processing') {
-                toast.success('Transcription started');
-                setTrackUntilComplete(true);
-            } else {
-                toast.success('Transcription completed');
-                setTranscribing(false);
-                setTrackUntilComplete(false);
-            }
+            setRecording(data?.recording || null);
+            const nextStatus = String(data?.recording?.transcript_status || '').toLowerCase();
+            if (data?.queued || nextStatus === 'processing') { toast.success('Transcription started'); setTrackUntilComplete(true); }
+            else { toast.success('Transcription completed'); setTranscribing(false); }
         } catch (error) {
             toast.error(error?.response?.data?.error || 'Transcription failed');
             setTranscribing(false);
-            setTrackUntilComplete(false);
         }
     };
 
     const seekToSegment = (segment) => {
         if (!audioRef.current) return;
-        const start = Number(segment?.start || 0);
-        audioRef.current.currentTime = start;
-        setCurrentTime(start);
-        audioRef.current.play().catch(() => { });
+        audioRef.current.currentTime = Number(segment?.start || 0);
+        setCurrentTime(Number(segment?.start || 0));
+        audioRef.current.play().catch(() => {});
     };
 
-    if (loading) {
-        return (
-            <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}>
-                <CircularProgress />
-            </Box>
-        );
-    }
+    const skipAudio = (seconds) => {
+        if (!audioRef.current) return;
+        audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime + seconds);
+    };
 
-    if (!recording) {
-        return (
-            <Alert severity="error">Recording not found</Alert>
-        );
-    }
+    const cycleSpeed = () => {
+        const idx = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
+        setPlaybackSpeed(PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length]);
+    };
+
+    if (loading) return <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}><CircularProgress /></Box>;
+    if (!recording) return <Alert severity="error">Recording not found</Alert>;
+
+    const totalDuration = recording.duration_seconds || 0;
 
     return (
         <Box>
-            <Button startIcon={<ArrowBack />} onClick={() => navigate('/recordings')} sx={{ mb: 2 }}>
-                Back to Recordings
-            </Button>
-
-            <Card sx={{ mb: 2 }}>
-                <CardContent>
-                    <Typography variant="h5" fontWeight={700} sx={{ mb: 0.5 }}>
-                        {recording.title}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                        {recording.contact_name || 'Uploaded Recording'} {recording.contact_phone ? `· ${recording.contact_phone}` : ''}
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
-                        <Chip size="small" label={recording.source} />
-                        <Chip size="small" label={`Transcript: ${recording.transcript_status || 'none'}`} />
-                        <Chip size="small" label={`Duration: ${recording.duration_formatted || '-'}`} />
+            {/* Header */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                <IconButton onClick={() => navigate('/recordings')} sx={{ color: '#64748b' }}><ArrowBack /></IconButton>
+                <Box sx={{ flex: 1 }}>
+                    <Typography variant="h5" fontWeight={800}>{recording.title}</Typography>
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mt: 0.5 }}>
+                        {recording.contact_name && (
+                            <Chip icon={<Person sx={{ fontSize: 14 }} />} label={recording.contact_name} size="small" sx={{ bgcolor: 'rgba(1,66,162,0.08)' }} />
+                        )}
+                        {recording.contact_phone && (
+                            <Typography variant="caption" color="text.secondary" fontFamily="monospace">{recording.contact_phone}</Typography>
+                        )}
+                        <Chip size="small" label={recording.source}
+                            sx={{ bgcolor: recording.source === 'upload' ? '#10b98115' : '#1a5bc415', color: recording.source === 'upload' ? '#10b981' : '#1a5bc4', fontWeight: 600 }} />
+                        <Chip size="small" label={recording.duration_formatted || '-'} variant="outlined" sx={{ borderColor: 'rgba(1,66,162,0.2)' }} />
+                        {recording.created_at && <Typography variant="caption" color="text.secondary">{shortDateTime(recording.created_at)}</Typography>}
                     </Box>
-                    {!hasTranscript ? (
-                        <Alert severity="info" sx={{ mb: 2 }}>
-                            Transcript is generated automatically when recording is available. You can use "Generate Transcript" to retry manually.
-                        </Alert>
-                    ) : null}
-                    {recording.transcript_error ? (
-                        <Alert severity="error" sx={{ mb: 2 }}>
-                            {recording.transcript_error}
-                        </Alert>
-                    ) : null}
-                    {transcriptStatus === 'processing' ? (
-                        <Alert severity="info" sx={{ mb: 2 }}>
-                            Large recordings can take a few minutes. This page refreshes transcript status automatically.
-                        </Alert>
-                    ) : null}
-                    {(transcriptStatus === 'processing' || transcriptStatus === 'completed' || transcriptStatus === 'failed') ? (
-                        <Box sx={{ mb: 2 }}>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
-                                <Typography variant="caption" color="text.secondary">
-                                    Transcription Progress
-                                </Typography>
-                                <Typography variant="caption" fontWeight={700}>
-                                    {transcriptProgressPercent}%
+                </Box>
+                <Button variant="contained" startIcon={transcribing ? <CircularProgress size={16} color="inherit" /> : <Mic />}
+                    onClick={runTranscription} disabled={transcribing}
+                    sx={{ bgcolor: '#0142a2', '&:hover': { bgcolor: '#1a5bc4' } }}>
+                    {transcribing ? 'Transcribing...' : hasTranscript ? 'Re-generate Transcript' : 'Generate Transcript'}
+                </Button>
+            </Box>
+
+            {/* Alerts */}
+            {recording.transcript_error && <Alert severity="error" sx={{ mb: 1.5, borderRadius: 2 }}>{recording.transcript_error}</Alert>}
+            {transcriptStatus === 'processing' && <Alert severity="info" sx={{ mb: 1.5, borderRadius: 2 }}>Transcription in progress — this page auto-refreshes.</Alert>}
+
+            {/* Progress bar */}
+            {(transcriptStatus === 'processing' || transcriptStatus === 'failed') && (
+                <Box sx={{ mb: 2 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                        <Typography variant="caption" color="text.secondary">{transcriptProgressStage || 'Processing'}</Typography>
+                        <Typography variant="caption" fontWeight={700}>{transcriptProgressPercent}%</Typography>
+                    </Box>
+                    <LinearProgress variant="determinate" value={transcriptProgressPercent}
+                        color={transcriptStatus === 'failed' ? 'error' : 'primary'}
+                        sx={{ height: 6, borderRadius: 4 }} />
+                </Box>
+            )}
+
+            <Grid container spacing={2}>
+                {/* Audio Player + Controls (top-spanning) */}
+                <Grid item xs={12}>
+                    <Card sx={{ border: '1px solid rgba(1,66,162,0.08)' }}>
+                        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                {/* Skip back */}
+                                <Tooltip title="Back 15s">
+                                    <IconButton size="small" onClick={() => skipAudio(-15)} sx={{ color: '#64748b' }}>
+                                        <FastRewind sx={{ fontSize: 20 }} />
+                                    </IconButton>
+                                </Tooltip>
+
+                                {/* Audio player */}
+                                <Box sx={{ flex: 1 }}>
+                                    {recording.audio_url ? (
+                                        <audio ref={audioRef} controls src={resolveMediaUrl(recording.audio_url)}
+                                            style={{ width: '100%', height: 36 }}
+                                            onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime || 0)}
+                                            onSeeked={(e) => setCurrentTime(e.currentTarget.currentTime || 0)} />
+                                    ) : (
+                                        <Typography color="text.secondary" fontSize="0.85rem">Audio unavailable</Typography>
+                                    )}
+                                </Box>
+
+                                {/* Skip forward */}
+                                <Tooltip title="Forward 15s">
+                                    <IconButton size="small" onClick={() => skipAudio(15)} sx={{ color: '#64748b' }}>
+                                        <FastForward sx={{ fontSize: 20 }} />
+                                    </IconButton>
+                                </Tooltip>
+
+                                {/* Playback speed */}
+                                <Tooltip title="Playback speed">
+                                    <Button size="small" variant="outlined" onClick={cycleSpeed}
+                                        sx={{ minWidth: 50, fontSize: '0.75rem', fontWeight: 700, borderColor: 'rgba(1,66,162,0.2)', color: '#1a5bc4' }}>
+                                        {playbackSpeed}x
+                                    </Button>
+                                </Tooltip>
+
+                                {/* Time display */}
+                                <Typography variant="caption" fontFamily="monospace" color="text.secondary" sx={{ minWidth: 90, textAlign: 'right' }}>
+                                    {formatTime(currentTime)} / {formatTime(totalDuration)}
                                 </Typography>
                             </Box>
-                            <LinearProgress
-                                variant="determinate"
-                                value={transcriptProgressPercent}
-                                color={transcriptStatus === 'failed' ? 'error' : transcriptStatus === 'completed' ? 'success' : 'primary'}
-                                sx={{ height: 8, borderRadius: 10 }}
-                            />
-                            {transcriptProgressStage ? (
-                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                                    {transcriptProgressStage}
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                {/* Transcript panel */}
+                <Grid item xs={12}>
+                    <Card>
+                        <CardContent>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                                <Typography variant="subtitle2" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748b', fontSize: '0.72rem' }}>
+                                    Transcript {segments.length > 0 && `(${segments.length} segments)`}
                                 </Typography>
-                            ) : null}
-                        </Box>
-                    ) : null}
-                    <Button
-                        variant="contained"
-                        startIcon={transcribing ? <CircularProgress size={16} color="inherit" /> : <Mic />}
-                        onClick={runTranscription}
-                        disabled={transcribing}
-                        sx={{ mr: 1, mb: { xs: 1, sm: 0 } }}
-                    >
-                        {transcribing ? 'Transcribing...' : 'Generate Transcript'}
-                    </Button>
-                    <Chip size="small" label="English Only" sx={{ mt: { xs: 0.25, sm: 0 } }} />
-                </CardContent>
-            </Card>
+                                {segments.length > 0 && (
+                                    <TextField size="small" placeholder="Search transcript..."
+                                        value={transcriptSearch} onChange={(e) => setTranscriptSearch(e.target.value)}
+                                        InputProps={{ startAdornment: <InputAdornment position="start"><Search sx={{ color: '#94a3b8', fontSize: 16 }} /></InputAdornment> }}
+                                        sx={{ width: 220, '& .MuiInputBase-input': { fontSize: '0.8rem' } }} />
+                                )}
+                            </Box>
 
-            <Card sx={{ mb: 2 }}>
-                <CardContent>
-                    <Typography variant="h6" fontWeight={700} sx={{ mb: 1 }}>
-                        Transcript
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                        Current playback: {formatTime(currentTime)}
-                    </Typography>
-                    <Divider sx={{ mb: 1.5 }} />
-                    {segments.length ? (
-                        <Box sx={{ maxHeight: 360, overflowY: 'auto', display: 'grid', gap: 0.75 }}>
-                            {segments.map((segment, index) => {
-                                const active = index === currentSegmentIndex;
-                                return (
-                                    <Box
-                                        key={`${index}-${segment.start}-${segment.end}`}
-                                        onClick={() => seekToSegment(segment)}
-                                        sx={{
-                                            p: 1.2,
-                                            borderRadius: 1.5,
-                                            cursor: 'pointer',
-                                            bgcolor: active ? 'rgba(16,185,129,0.2)' : 'rgba(1,66,162,0.08)',
-                                            border: active ? '1px solid rgba(16,185,129,0.5)' : '1px solid transparent',
-                                            transition: 'all 0.15s ease',
-                                            display: 'flex',
-                                            alignItems: 'flex-start',
-                                            gap: 1,
-                                        }}
-                                    >
-                                        <Typography variant="caption" sx={{ minWidth: 52, color: active ? '#10b981' : '#94a3b8' }}>
-                                            {formatTime(segment.start)}
-                                        </Typography>
-                                        <Typography variant="body2" sx={{ color: active ? '#212322ff' : 'text.primary' }}>
-                                            {segment.text}
-                                        </Typography>
-                                        {active ? <GraphicEq sx={{ color: '#10b981', fontSize: 18, ml: 'auto' }} /> : null}
-                                    </Box>
-                                );
-                            })}
-                        </Box>
-                    ) : hasTranscript ? (
-                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.08)' }}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-                                {recording.transcript_text}
-                            </Typography>
-                        </Box>
-                    ) : (
-                        <Typography color="text.secondary">No transcript yet.</Typography>
-                    )}
-                </CardContent>
-            </Card>
+                            {filteredSegments.length > 0 ? (
+                                <Box sx={{ maxHeight: 480, overflowY: 'auto', display: 'grid', gap: 0.5 }}>
+                                    {filteredSegments.map((segment, index) => {
+                                        const realIndex = segments.indexOf(segment);
+                                        const active = realIndex === currentSegmentIndex;
+                                        const highlightText = transcriptSearch.trim()
+                                            ? String(segment.text || '').replace(
+                                                new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'),
+                                                '<mark style="background:#fef08a;border-radius:2px;padding:0 1px">$1</mark>'
+                                            )
+                                            : null;
 
-            <Card>
-                <CardContent>
-                    <Typography variant="h6" fontWeight={700} sx={{ mb: 1.5 }}>
-                        Recording
-                    </Typography>
-                    {recording.audio_url ? (
-                        <audio
-                            ref={audioRef}
-                            controls
-                            src={resolveMediaUrl(recording.audio_url)}
-                            style={{ width: '100%' }}
-                            onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime || 0)}
-                            onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime || 0)}
-                        />
-                    ) : (
-                        <Typography color="text.secondary">Audio source unavailable.</Typography>
-                    )}
-                </CardContent>
-            </Card>
+                                        return (
+                                            <Box key={`${realIndex}-${segment.start}`}
+                                                ref={active ? activeSegmentRef : null}
+                                                onClick={() => seekToSegment(segment)}
+                                                sx={{
+                                                    p: 1.25, borderRadius: 2, cursor: 'pointer',
+                                                    bgcolor: active ? 'rgba(16,185,129,0.12)' : 'rgba(1,66,162,0.03)',
+                                                    borderLeft: active ? '3px solid #10b981' : '3px solid transparent',
+                                                    transition: 'all 0.15s',
+                                                    '&:hover': { bgcolor: active ? 'rgba(16,185,129,0.15)' : 'rgba(1,66,162,0.06)' },
+                                                    display: 'flex', alignItems: 'flex-start', gap: 1,
+                                                }}>
+                                                <Typography variant="caption" sx={{
+                                                    minWidth: 48, fontFamily: 'monospace', fontWeight: 600,
+                                                    color: active ? '#10b981' : '#94a3b8', mt: 0.2,
+                                                }}>
+                                                    {formatTime(segment.start)}
+                                                </Typography>
+                                                {highlightText ? (
+                                                    <Typography variant="body2" sx={{ flex: 1, lineHeight: 1.6 }}
+                                                        dangerouslySetInnerHTML={{ __html: highlightText }} />
+                                                ) : (
+                                                    <Typography variant="body2" sx={{ flex: 1, lineHeight: 1.6, color: active ? '#0f172a' : 'text.primary' }}>
+                                                        {segment.text}
+                                                    </Typography>
+                                                )}
+                                                {active && <GraphicEq sx={{ color: '#10b981', fontSize: 16, mt: 0.3, flexShrink: 0 }} />}
+                                            </Box>
+                                        );
+                                    })}
+                                </Box>
+                            ) : hasTranscript && !segments.length ? (
+                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'rgba(1,66,162,0.04)' }}>
+                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+                                        {recording.transcript_text}
+                                    </Typography>
+                                </Box>
+                            ) : transcriptSearch && segments.length > 0 ? (
+                                <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
+                                    No segments match "{transcriptSearch}"
+                                </Typography>
+                            ) : (
+                                <Box sx={{ textAlign: 'center', py: 4 }}>
+                                    <GraphicEq sx={{ fontSize: 40, color: '#cbd5e1', mb: 1 }} />
+                                    <Typography color="text.secondary">No transcript yet. Click "Generate Transcript" to start.</Typography>
+                                </Box>
+                            )}
+                        </CardContent>
+                    </Card>
+                </Grid>
+            </Grid>
         </Box>
     );
 }

@@ -4,6 +4,8 @@ import {
     DialogActions, Grid, Typography,
 } from '@mui/material';
 import { formatCallStatus } from '../lib/callStatus';
+import { shortDateTime } from '../lib/formatDate';
+import { resolveMediaUrl } from '../lib/mediaUrl';
 
 /**
  * Dialog showing details of a single call log entry.
@@ -21,7 +23,7 @@ export default function CallDetailDialog({ call, onClose, extraFields, children 
         { label: 'Phone', value: call.contact_phone },
         { label: 'SDR', value: call.agent_name },
         { label: 'Duration', value: call.duration_formatted },
-        { label: 'Time', value: new Date(call.initiated_at).toLocaleString() },
+        { label: 'Time', value: shortDateTime(call.initiated_at) },
     ];
 
     const allFields = extraFields ? [...baseFields, ...extraFields] : baseFields;
@@ -55,7 +57,7 @@ export default function CallDetailDialog({ call, onClose, extraFields, children 
                 {call.recording_url && (
                     <Box sx={{ mt: 2 }}>
                         <Typography variant="subtitle2" fontWeight={600} mb={1}>Recording</Typography>
-                        <audio controls preload="none" src={call.recording_url} style={{ width: '100%' }} />
+                        <audio controls preload="none" src={resolveMediaUrl(call.recording_url)} style={{ width: '100%' }} />
                     </Box>
                 )}
 

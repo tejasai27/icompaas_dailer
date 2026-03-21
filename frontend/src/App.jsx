@@ -279,9 +279,8 @@ function App() {
             }}
           />
           <ErrorBoundary>
-          <Suspense fallback={<PageLoader />}>
             <Routes>
-              <Route path="/login" element={<LoginPage />} />
+              <Route path="/login" element={<Suspense fallback={<PageLoader />}><LoginPage /></Suspense>} />
               <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
                 <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<DashboardPage />} />
@@ -303,7 +302,6 @@ function App() {
               </Route>
               <Route path="*" element={<Navigate to="/login" replace />} />
             </Routes>
-          </Suspense>
           </ErrorBoundary>
         </BrowserRouter>
       </AuthProvider>

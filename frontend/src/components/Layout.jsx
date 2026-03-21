@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import CircularProgress from '@mui/material/CircularProgress';
 import {
     Box, Drawer, AppBar, Toolbar, Typography, IconButton,
     List, ListItem, ListItemButton, ListItemIcon, ListItemText,
-    Avatar, Tooltip, Divider, Badge, Button
+    Avatar, Tooltip, Divider, Button
 } from '@mui/material';
 import {
     Dashboard, Campaign, Headphones, Contacts, Phone, Dialpad,
@@ -121,6 +122,22 @@ export default function Layout() {
                     </Box>
                 )}
 
+                {/* Collapsed Create Campaign button */}
+                {!open && (
+                    <Box sx={{ px: 1, pb: 1.5, display: 'flex', justifyContent: 'center' }}>
+                        <Tooltip title="Create Campaign" placement="right">
+                            <IconButton
+                                onClick={() => navigate('/campaigns/new')}
+                                sx={{
+                                    bgcolor: '#0142a2', color: '#fff', width: 36, height: 36,
+                                    '&:hover': { bgcolor: '#1a5bc4' },
+                                }}>
+                                <Add sx={{ fontSize: 18 }} />
+                            </IconButton>
+                        </Tooltip>
+                    </Box>
+                )}
+
                 {/* Nav */}
                 <List sx={{ flex: 1, px: 1, pt: 0.5, pb: 1 }}>
                     {nav.map(({ label, icon, path }) => {
@@ -133,7 +150,8 @@ export default function Layout() {
                                         sx={{
                                             borderRadius: 1.5,
                                             minHeight: 38,
-                                            px: open ? 1.5 : 1,
+                                            px: open ? 1.5 : 0,
+                                            justifyContent: open ? 'flex-start' : 'center',
                                             py: 0.75,
                                             position: 'relative',
                                             bgcolor: active ? SIDEBAR_ACTIVE : 'transparent',
@@ -276,16 +294,20 @@ export default function Layout() {
                             size="small"
                             sx={{ color: '#64748b', '&:hover': { color: '#0142a2', bgcolor: 'rgba(1,66,162,0.06)' } }}
                         >
-                            <Badge badgeContent={0} color="error">
-                                <Notifications fontSize="small" />
-                            </Badge>
+                            <Notifications fontSize="small" />
                         </IconButton>
                     </Toolbar>
                 </AppBar>
 
                 {/* Page content */}
                 <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
-                    <Outlet />
+                    <Suspense fallback={
+                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+                            <CircularProgress sx={{ color: '#0142a2' }} />
+                        </Box>
+                    }>
+                        <Outlet />
+                    </Suspense>
                 </Box>
             </Box>
         </Box>

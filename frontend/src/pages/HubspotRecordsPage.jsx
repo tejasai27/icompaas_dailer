@@ -27,6 +27,8 @@ import {
 import { Refresh, Search } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { ContentCopy } from '@mui/icons-material';
+import { shortDateTime } from '../lib/formatDate';
 
 const STATUS_COLORS = {
     success: { bg: 'rgba(16,185,129,0.15)', color: '#10b981' },
@@ -50,7 +52,7 @@ export default function HubspotRecordsPage() {
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
     const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState('success');
+    const [statusFilter, setStatusFilter] = useState('');
     const [selected, setSelected] = useState(null);
 
     const fetchRecords = async () => {
@@ -155,7 +157,7 @@ export default function HubspotRecordsPage() {
                                 <TableRow>
                                     <TableCell colSpan={8}>
                                         <Typography color="text.secondary" sx={{ py: 1.5 }}>
-                                            {loading ? 'Loading HubSpot records...' : 'No HubSpot records found'}
+                                            {loading ? 'Loading HubSpot records...' : 'No sync records found. Records appear here after calls are synced to HubSpot.'}
                                         </Typography>
                                     </TableCell>
                                 </TableRow>
@@ -171,7 +173,7 @@ export default function HubspotRecordsPage() {
                                     >
                                         <TableCell>
                                             <Typography fontSize="0.78rem" color="text.secondary">
-                                                {row.created_at ? new Date(row.created_at).toLocaleString() : '-'}
+                                                {shortDateTime(row.created_at)}
                                             </Typography>
                                         </TableCell>
                                         <TableCell>
@@ -258,14 +260,24 @@ export default function HubspotRecordsPage() {
                             ))}
                         </Grid>
 
-                        <Typography variant="subtitle2" sx={{ mb: 1 }}>Request Payload</Typography>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                            <Typography variant="subtitle2">Request Payload</Typography>
+                            <Button size="small" startIcon={<ContentCopy sx={{ fontSize: 14 }} />}
+                                onClick={() => { navigator.clipboard.writeText(_prettyJson(selected.request_payload)); toast.success('Copied!'); }}
+                                sx={{ textTransform: 'none', fontSize: '0.7rem' }}>Copy</Button>
+                        </Box>
                         <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: '#0b1220', color: '#e2e8f0', mb: 2, overflowX: 'auto' }}>
                             <Typography component="pre" sx={{ m: 0, fontSize: '0.75rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                                 {_prettyJson(selected.request_payload)}
                             </Typography>
                         </Box>
 
-                        <Typography variant="subtitle2" sx={{ mb: 1 }}>Response Payload</Typography>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                            <Typography variant="subtitle2">Response Payload</Typography>
+                            <Button size="small" startIcon={<ContentCopy sx={{ fontSize: 14 }} />}
+                                onClick={() => { navigator.clipboard.writeText(_prettyJson(selected.response_payload)); toast.success('Copied!'); }}
+                                sx={{ textTransform: 'none', fontSize: '0.7rem' }}>Copy</Button>
+                        </Box>
                         <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: '#0b1220', color: '#e2e8f0', overflowX: 'auto' }}>
                             <Typography component="pre" sx={{ m: 0, fontSize: '0.75rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                                 {_prettyJson(selected.response_payload)}

@@ -1,131 +1,67 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    Alert,
-    Box,
-    Button,
-    Card,
-    CardContent,
-    Chip,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogTitle,
-    FormControl,
-    Grid,
-    IconButton,
-    InputLabel,
-    MenuItem,
-    Select,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    TextField,
-    Tooltip,
-    Typography,
+    Alert, Avatar, Box, Button, Card, CardContent, Chip, CircularProgress,
+    Dialog, DialogActions, DialogContent, DialogTitle, FormControl, Grid,
+    IconButton, InputAdornment, InputLabel, MenuItem, Select, Skeleton, Table, TableBody,
+    TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material';
-import {
-    Add,
-    DeleteOutline,
-    Edit,
-    Refresh,
-} from '@mui/icons-material';
+import { Add, DeleteOutline, Edit, People, Person, Refresh, Search } from '@mui/icons-material';
 import api from '../services/api';
 import toast from 'react-hot-toast';
+import useConfirm from '../lib/useConfirm';
+import useVisibleInterval from '../lib/useVisibleInterval';
 
 const STATUS_OPTIONS = ['available', 'ringing', 'busy', 'wrap_up', 'offline'];
 
 const STATUS_COLORS = {
-    available: { bg: '#10b98125', text: '#10b981' },
-    ringing: { bg: '#3b82f625', text: '#3b82f6' },
-    busy: { bg: '#f59e0b25', text: '#f59e0b' },
-    wrap_up: { bg: '#8b5cf625', text: '#8b5cf6' },
-    offline: { bg: '#64748b25', text: '#94a3b8' },
+    available: { bg: '#10b98120', text: '#10b981', border: '#10b981', desc: 'Ready to take calls', label: 'Available' },
+    ringing: { bg: '#3b82f620', text: '#3b82f6', border: '#3b82f6', desc: 'Phone is ringing', label: 'Ringing' },
+    busy: { bg: '#f59e0b20', text: '#f59e0b', border: '#f59e0b', desc: 'Currently on a call', label: 'On Call' },
+    wrap_up: { bg: '#8b5cf620', text: '#8b5cf6', border: '#8b5cf6', desc: 'Finishing call notes', label: 'Wrap Up' },
+    offline: { bg: '#64748b20', text: '#94a3b8', border: '#94a3b8', desc: 'Not available', label: 'Offline' },
 };
 
-const EMPTY_FORM = {
-    display_name: '',
-    username: '',
-    email: '',
-    status: 'offline',
-    password: '',
-};
+const EMPTY_FORM = { display_name: '', username: '', email: '', status: 'offline', password: '' };
 
-function SdrDialog({
-    open,
-    title,
-    saving,
-    form,
-    onChange,
-    onClose,
-    onSubmit,
-    includePassword = true,
-}) {
+function SdrDialog({ open, title, saving, form, onChange, onClose, onSubmit, includePassword = true }) {
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>{title}</DialogTitle>
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
+            PaperProps={{ sx: { borderRadius: 3, bgcolor: '#f0f4f9', border: '1px solid rgba(1,66,162,0.15)' } }}>
+            <DialogTitle sx={{ fontWeight: 700 }}>{title}</DialogTitle>
             <DialogContent>
                 <Grid container spacing={2} sx={{ mt: 0.5 }}>
                     <Grid item xs={12} sm={6}>
-                        <TextField
-                            label="SDR Name"
-                            value={form.display_name}
-                            onChange={(e) => onChange('display_name', e.target.value)}
-                            fullWidth
-                            required
-                        />
+                        <TextField label="SDR Name *" value={form.display_name} onChange={(e) => onChange('display_name', e.target.value)} fullWidth />
                     </Grid>
                     <Grid item xs={12} sm={6}>
                         <FormControl fullWidth>
                             <InputLabel>Status</InputLabel>
-                            <Select
-                                label="Status"
-                                value={form.status}
-                                onChange={(e) => onChange('status', e.target.value)}
-                            >
-                                {STATUS_OPTIONS.map((status) => (
-                                    <MenuItem key={status} value={status}>{status}</MenuItem>
-                                ))}
+                            <Select label="Status" value={form.status} onChange={(e) => onChange('status', e.target.value)}>
+                                {STATUS_OPTIONS.map((s) => {
+                                    const cfg = STATUS_COLORS[s] || STATUS_COLORS.offline;
+                                    return <MenuItem key={s} value={s}><Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: cfg.text }} />{s}</Box></MenuItem>;
+                                })}
                             </Select>
                         </FormControl>
                     </Grid>
                     <Grid item xs={12} sm={6}>
-                        <TextField
-                            label="Username"
-                            value={form.username}
-                            onChange={(e) => onChange('username', e.target.value)}
-                            fullWidth
-                            helperText="Optional. Auto-generated if empty."
-                        />
+                        <TextField label="Username" value={form.username} onChange={(e) => onChange('username', e.target.value)} fullWidth helperText="Optional. Auto-generated if empty." />
                     </Grid>
                     <Grid item xs={12} sm={6}>
-                        <TextField
-                            label="Email"
-                            type="email"
-                            value={form.email}
-                            onChange={(e) => onChange('email', e.target.value)}
-                            fullWidth
-                        />
+                        <TextField label="Email" type="email" value={form.email} onChange={(e) => onChange('email', e.target.value)} fullWidth />
                     </Grid>
                     {includePassword && (
                         <Grid item xs={12}>
-                            <TextField
-                                label="Password"
-                                type="password"
-                                value={form.password}
-                                onChange={(e) => onChange('password', e.target.value)}
-                                fullWidth
-                                helperText="Optional. Leave empty to create/update without login password."
-                            />
+                            <TextField label="Password" type="password" value={form.password} onChange={(e) => onChange('password', e.target.value)} fullWidth
+                                helperText="Optional. Leave empty to skip." />
                         </Grid>
                     )}
                 </Grid>
             </DialogContent>
-            <DialogActions>
+            <DialogActions sx={{ px: 3, pb: 2 }}>
                 <Button onClick={onClose} disabled={saving}>Cancel</Button>
-                <Button onClick={onSubmit} variant="contained" disabled={saving}>
+                <Button onClick={onSubmit} variant="contained" disabled={saving}
+                    sx={{ bgcolor: '#0142a2', '&:hover': { bgcolor: '#1a5bc4' } }}>
                     {saving ? 'Saving...' : 'Save'}
                 </Button>
             </DialogActions>
@@ -137,64 +73,43 @@ export default function SdrsPage() {
     const [sdrs, setSdrs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-
     const [createOpen, setCreateOpen] = useState(false);
     const [editOpen, setEditOpen] = useState(false);
     const [createForm, setCreateForm] = useState(EMPTY_FORM);
     const [editForm, setEditForm] = useState(EMPTY_FORM);
     const [editingSdr, setEditingSdr] = useState(null);
-
     const [saving, setSaving] = useState(false);
     const [deletingId, setDeletingId] = useState(null);
+    const [search, setSearch] = useState('');
+    const [confirm, ConfirmEl] = useConfirm();
 
-    const stats = useMemo(() => {
-        const available = sdrs.filter((sdr) => sdr.status === 'available').length;
-        const busy = sdrs.filter((sdr) => sdr.status === 'busy').length;
-        return {
-            total: sdrs.length,
-            available,
-            busy,
-        };
-    }, [sdrs]);
+    const stats = useMemo(() => ({
+        total: sdrs.length,
+        available: sdrs.filter((s) => s.status === 'available').length,
+        busy: sdrs.filter((s) => s.status === 'busy' || s.status === 'ringing').length,
+        offline: sdrs.filter((s) => s.status === 'offline').length,
+    }), [sdrs]);
 
     const fetchSdrs = async ({ silent = false } = {}) => {
-        if (!silent) {
-            setLoading(true);
-        }
+        if (!silent) setLoading(true);
         try {
             const { data } = await api.get('/agents/');
             setSdrs(Array.isArray(data?.agents) ? data.agents : []);
             setError('');
         } catch (e) {
             setError(e?.response?.data?.error || 'Failed to load SDRs');
-            if (!silent) {
-                toast.error(e?.response?.data?.error || 'Failed to load SDRs');
-            }
-        } finally {
-            if (!silent) {
-                setLoading(false);
-            }
-        }
+            if (!silent) toast.error(e?.response?.data?.error || 'Failed to load SDRs');
+        } finally { if (!silent) setLoading(false); }
     };
 
-    useEffect(() => {
-        fetchSdrs();
-    }, []);
+    useEffect(() => { fetchSdrs(); }, []);
+    useVisibleInterval(() => fetchSdrs({ silent: true }), 30000);
 
-    const onCreateChange = (field, value) => {
-        setCreateForm((prev) => ({ ...prev, [field]: value }));
-    };
-
-    const onEditChange = (field, value) => {
-        setEditForm((prev) => ({ ...prev, [field]: value }));
-    };
+    const onCreateChange = (field, value) => setCreateForm((p) => ({ ...p, [field]: value }));
+    const onEditChange = (field, value) => setEditForm((p) => ({ ...p, [field]: value }));
 
     const handleCreate = async () => {
-        if (!createForm.display_name.trim()) {
-            toast.error('SDR name is required');
-            return;
-        }
-
+        if (!createForm.display_name.trim()) { toast.error('SDR name is required'); return; }
         setSaving(true);
         try {
             await api.post('/agents/create/', createForm);
@@ -202,32 +117,18 @@ export default function SdrsPage() {
             setCreateOpen(false);
             setCreateForm(EMPTY_FORM);
             fetchSdrs({ silent: true });
-        } catch (e) {
-            toast.error(e?.response?.data?.error || 'Failed to create SDR');
-        } finally {
-            setSaving(false);
-        }
+        } catch (e) { toast.error(e?.response?.data?.error || 'Failed to create SDR'); }
+        finally { setSaving(false); }
     };
 
     const openEdit = (sdr) => {
         setEditingSdr(sdr);
-        setEditForm({
-            display_name: sdr.display_name || '',
-            username: sdr.username || '',
-            email: sdr.email || '',
-            status: sdr.status || 'offline',
-            password: '',
-        });
+        setEditForm({ display_name: sdr.display_name || '', username: sdr.username || '', email: sdr.email || '', status: sdr.status || 'offline', password: '' });
         setEditOpen(true);
     };
 
     const handleEdit = async () => {
-        if (!editingSdr) return;
-        if (!editForm.display_name.trim()) {
-            toast.error('SDR name is required');
-            return;
-        }
-
+        if (!editingSdr || !editForm.display_name.trim()) { toast.error('SDR name is required'); return; }
         setSaving(true);
         try {
             await api.post(`/agents/${editingSdr.id}/update/`, editForm);
@@ -235,80 +136,83 @@ export default function SdrsPage() {
             setEditOpen(false);
             setEditingSdr(null);
             fetchSdrs({ silent: true });
-        } catch (e) {
-            toast.error(e?.response?.data?.error || 'Failed to update SDR');
-        } finally {
-            setSaving(false);
-        }
+        } catch (e) { toast.error(e?.response?.data?.error || 'Failed to update SDR'); }
+        finally { setSaving(false); }
     };
 
     const handleDelete = async (sdr) => {
-        const ok = window.confirm(`Delete SDR "${sdr.display_name}"?`);
+        const ok = await confirm({ title: 'Delete SDR', body: `"${sdr.display_name}" will be permanently deleted. Active campaigns using this SDR will need reassignment.`, confirmLabel: 'Delete' });
         if (!ok) return;
-
         setDeletingId(sdr.id);
         try {
             await api.post(`/agents/${sdr.id}/delete/`);
             toast.success('SDR deleted');
             fetchSdrs({ silent: true });
-        } catch (e) {
-            const code = e?.response?.data?.error;
-            if (code === 'agent_call_in_progress') {
-                toast.error('Cannot delete while SDR has an active call');
-            } else {
-                toast.error(code || 'Failed to delete SDR');
-            }
-        } finally {
-            setDeletingId(null);
-        }
+        } catch (e) { toast.error(e?.response?.data?.error === 'agent_call_in_progress' ? 'Active call — try later' : (e?.response?.data?.error || 'Failed')); }
+        finally { setDeletingId(null); }
     };
 
     return (
         <Box>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, gap: 1, flexWrap: 'wrap' }}>
+            {/* Header */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Box>
-                    <Typography variant="h4" fontWeight={700}>SDRs</Typography>
-                    <Typography color="text.secondary" variant="body2">Create and manage SDR users for dialing campaigns</Typography>
+                    <Typography variant="h4" fontWeight={800}>SDRs</Typography>
+                    <Typography color="text.secondary" variant="body2">{stats.total} sales development reps</Typography>
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button variant="outlined" startIcon={<Refresh />} onClick={() => fetchSdrs()}>
-                        Refresh
-                    </Button>
-                    <Button variant="contained" startIcon={<Add />} onClick={() => setCreateOpen(true)}>
-                        Create SDR
-                    </Button>
+                    <Button variant="outlined" startIcon={<Refresh />} onClick={() => fetchSdrs()}
+                        sx={{ borderColor: 'rgba(1,66,162,0.3)', color: '#1a5bc4' }}>Refresh</Button>
+                    <Button variant="contained" startIcon={<Add />} onClick={() => setCreateOpen(true)}
+                        sx={{ background: 'linear-gradient(135deg, #0142a2, #1a5bc4)' }}>Create SDR</Button>
                 </Box>
             </Box>
 
-            <Grid container spacing={2} sx={{ mb: 2 }}>
-                <Grid item xs={12} sm={4}>
-                    <Card><CardContent>
-                        <Typography color="text.secondary" variant="body2">Total SDRs</Typography>
-                        <Typography variant="h5" fontWeight={700}>{stats.total}</Typography>
-                    </CardContent></Card>
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                    <Card><CardContent>
-                        <Typography color="text.secondary" variant="body2">Available</Typography>
-                        <Typography variant="h5" fontWeight={700} color="#10b981">{stats.available}</Typography>
-                    </CardContent></Card>
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                    <Card><CardContent>
-                        <Typography color="text.secondary" variant="body2">Busy</Typography>
-                        <Typography variant="h5" fontWeight={700} color="#f59e0b">{stats.busy}</Typography>
-                    </CardContent></Card>
-                </Grid>
+            {/* Stat cards */}
+            <Grid container spacing={1.5} sx={{ mb: 2 }}>
+                {[
+                    { label: 'Total', value: stats.total, color: '#0142a2', icon: <People /> },
+                    { label: 'Available', value: stats.available, color: '#10b981', icon: <Person /> },
+                    { label: 'Busy / Ringing', value: stats.busy, color: '#f59e0b', icon: <Person /> },
+                    { label: 'Offline', value: stats.offline, color: '#94a3b8', icon: <Person /> },
+                ].map((s) => (
+                    <Grid item xs={6} sm={3} key={s.label}>
+                        <Card>
+                            <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                    <Box sx={{ width: 36, height: 36, borderRadius: 2, bgcolor: `${s.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        {React.cloneElement(s.icon, { sx: { color: s.color, fontSize: 18 } })}
+                                    </Box>
+                                    <Box>
+                                        <Typography variant="caption" color="text.secondary">{s.label}</Typography>
+                                        <Typography fontWeight={800} fontSize="1.1rem" color={s.color}>{loading ? <Skeleton width={20} /> : s.value}</Typography>
+                                    </Box>
+                                </Box>
+                            </CardContent>
+                        </Card>
+                    </Grid>
+                ))}
             </Grid>
 
-            {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
+            {/* Search */}
+            <Box sx={{ mb: 2 }}>
+                <TextField
+                    size="small" placeholder="Search SDRs by name, username, email..."
+                    value={search} onChange={(e) => setSearch(e.target.value)}
+                    InputProps={{ startAdornment: <InputAdornment position="start"><Search sx={{ color: '#94a3b8', fontSize: 18 }} /></InputAdornment> }}
+                    sx={{ width: 300 }}
+                />
+            </Box>
 
+            {error && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>{error}</Alert>}
+
+            {/* Table */}
             <Card>
                 <TableContainer>
                     <Table size="small">
                         <TableHead>
                             <TableRow>
-                                <TableCell>Name</TableCell>
+                                <TableCell>SDR</TableCell>
                                 <TableCell>Username</TableCell>
                                 <TableCell>Email</TableCell>
                                 <TableCell>Status</TableCell>
@@ -316,90 +220,63 @@ export default function SdrsPage() {
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {!loading && sdrs.length === 0 ? (
+                            {(() => {
+                                const filteredSdrs = search.trim()
+                                    ? sdrs.filter((s) => (s.display_name || '').toLowerCase().includes(search.toLowerCase()) || (s.username || '').toLowerCase().includes(search.toLowerCase()) || (s.email || '').toLowerCase().includes(search.toLowerCase()))
+                                    : sdrs;
+                                return loading ? Array.from({ length: 3 }).map((_, i) => (
+                                <TableRow key={i}>{Array.from({ length: 5 }).map((_, j) => <TableCell key={j}><Skeleton /></TableCell>)}</TableRow>
+                            )) : filteredSdrs.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={5} align="center" sx={{ py: 4, color: '#64748b' }}>
-                                        No SDRs found. Create your first SDR.
+                                    <TableCell colSpan={5} align="center" sx={{ py: 6 }}>
+                                        <People sx={{ fontSize: 40, color: '#cbd5e1', mb: 1 }} />
+                                        <Typography color="text.secondary">No SDRs yet. Create your first SDR to start dialing.</Typography>
                                     </TableCell>
                                 </TableRow>
-                            ) : (
-                                sdrs.map((sdr) => {
-                                    const colorCfg = STATUS_COLORS[sdr.status] || STATUS_COLORS.offline;
-                                    return (
-                                        <TableRow key={sdr.id} hover>
-                                            <TableCell>
-                                                <Typography fontWeight={600}>{sdr.display_name}</Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Typography fontSize="0.85rem" color="text.secondary">{sdr.username || '—'}</Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Typography fontSize="0.85rem" color="text.secondary">{sdr.email || '—'}</Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Chip
-                                                    label={sdr.status}
-                                                    size="small"
-                                                    sx={{ bgcolor: colorCfg.bg, color: colorCfg.text }}
-                                                />
-                                            </TableCell>
-                                            <TableCell align="right">
-                                                <Tooltip title="Edit SDR">
-                                                    <span>
-                                                        <IconButton size="small" onClick={() => openEdit(sdr)}>
-                                                            <Edit fontSize="small" />
-                                                        </IconButton>
-                                                    </span>
-                                                </Tooltip>
-                                                <Tooltip title="Delete SDR">
-                                                    <span>
-                                                        <IconButton
-                                                            size="small"
-                                                            color="error"
-                                                            onClick={() => handleDelete(sdr)}
-                                                            disabled={deletingId === sdr.id}
-                                                        >
-                                                            <DeleteOutline fontSize="small" />
-                                                        </IconButton>
-                                                    </span>
-                                                </Tooltip>
-                                            </TableCell>
-                                        </TableRow>
-                                    );
-                                })
-                            )}
+                            ) : filteredSdrs.map((sdr) => {
+                                const cfg = STATUS_COLORS[sdr.status] || STATUS_COLORS.offline;
+                                return (
+                                    <TableRow key={sdr.id} hover sx={{ borderLeft: `3px solid ${cfg.border}` }}>
+                                        <TableCell>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                                <Box sx={{ position: 'relative' }}>
+                                                    <Avatar sx={{ width: 32, height: 32, bgcolor: '#0142a2', fontSize: '0.75rem', fontWeight: 700 }}>
+                                                        {(sdr.display_name || '?')[0].toUpperCase()}
+                                                    </Avatar>
+                                                    <Box sx={{ position: 'absolute', bottom: -1, right: -1, width: 10, height: 10, borderRadius: '50%', bgcolor: cfg.border, border: '2px solid white' }} />
+                                                </Box>
+                                                <Typography fontWeight={600} fontSize="0.85rem">{sdr.display_name}</Typography>
+                                            </Box>
+                                        </TableCell>
+                                        <TableCell><Typography fontSize="0.85rem" color="text.secondary">{sdr.username || '—'}</Typography></TableCell>
+                                        <TableCell><Typography fontSize="0.85rem" color="text.secondary">{sdr.email || '—'}</Typography></TableCell>
+                                        <TableCell>
+                                            <Tooltip title={cfg.desc}>
+                                                <Chip label={cfg.label || sdr.status} size="small" sx={{ bgcolor: cfg.bg, color: cfg.text, fontWeight: 600, fontSize: '0.65rem' }} />
+                                            </Tooltip>
+                                        </TableCell>
+                                        <TableCell align="right">
+                                            <Tooltip title="Edit"><span><IconButton size="small" onClick={() => openEdit(sdr)}><Edit fontSize="small" /></IconButton></span></Tooltip>
+                                            <Tooltip title="Delete"><span>
+                                                <IconButton size="small" color="error" onClick={() => handleDelete(sdr)} disabled={deletingId === sdr.id}>
+                                                    {deletingId === sdr.id ? <CircularProgress size={16} /> : <DeleteOutline fontSize="small" />}
+                                                </IconButton>
+                                            </span></Tooltip>
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            });
+                            })()}
                         </TableBody>
                     </Table>
                 </TableContainer>
             </Card>
 
-            <SdrDialog
-                open={createOpen}
-                title="Create SDR"
-                form={createForm}
-                saving={saving}
-                onChange={onCreateChange}
-                onClose={() => {
-                    setCreateOpen(false);
-                    setCreateForm(EMPTY_FORM);
-                }}
-                onSubmit={handleCreate}
-                includePassword
-            />
-
-            <SdrDialog
-                open={editOpen}
-                title="Edit SDR"
-                form={editForm}
-                saving={saving}
-                onChange={onEditChange}
-                onClose={() => {
-                    setEditOpen(false);
-                    setEditingSdr(null);
-                }}
-                onSubmit={handleEdit}
-                includePassword
-            />
+            <SdrDialog open={createOpen} title="Create SDR" form={createForm} saving={saving} onChange={onCreateChange}
+                onClose={() => { setCreateOpen(false); setCreateForm(EMPTY_FORM); }} onSubmit={handleCreate} />
+            <SdrDialog open={editOpen} title="Edit SDR" form={editForm} saving={saving} onChange={onEditChange}
+                onClose={() => { setEditOpen(false); setEditingSdr(null); }} onSubmit={handleEdit} />
+            {ConfirmEl}
         </Box>
     );
 }

@@ -1,49 +1,40 @@
 /**
  * Resolve a media/audio URL from the backend.
  *
- * The Django backend sometimes returns a relative URL like:
- *   /media/dialer/recordings/filename.mp3
+ * The Django backend may return:
+ *   - An absolute URL like http://backend:8000/media/... or http://localhost:8000/media/...
+ *   - A relative URL like /media/dialer/recordings/filename.mp3
  *
- * In Docker/Vite setups, we prefer same-origin URLs so the dev server
- * proxy can forward /media requests to backend.
+ * In both cases, we need a same-origin path (/media/...) so the Vite dev
+ * server proxy (or nginx in production) can forward the request to the backend.
  */
-
-const trimTrailingSlashes = (value) => String(value || '').trim().replace(/\/+$/, '');
-const stripDialerPath = (value) => {
-  const base = trimTrailingSlashes(value);
-  if (!base) return '';
-  if (base.endsWith('/api/v1/dialer')) {
-    return base.slice(0, -'/api/v1/dialer'.length);
-  }
-  return base;
-};
-const BACKEND_BASE = stripDialerPath(
-  import.meta.env.VITE_API_BASE ||
-  import.meta.env.VITE_API_URL
-);
 
 /**
- * Convert a potentially relative media URL to a fully-qualified URL
- * pointing at the backend server.
+ * Convert any media URL to a browser-accessible path.
+ *
+ * Absolute URLs pointing at the backend (e.g. http://localhost:8000/media/...)
+ * are stripped to just the path (/media/...) so they route through the
+ * frontend proxy.
  *
  * @param {string|null|undefined} url - The URL returned from the API
- * @returns {string} - A fully-qualified URL the browser can fetch
+ * @returns {string} - A URL the browser can fetch
  */
 export function resolveMediaUrl(url) {
-  if (!url) return '';
-  const trimmed = String(url).trim();
-  if (!trimmed) return '';
+    if (!url) return '';
+    const trimmed = String(url).trim();
+    if (!trimmed) return '';
 
-  // Already a full URL — return as-is
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    // Absolute URL — extract just the path portion so it goes through the proxy
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        try {
+            const parsed = new URL(trimmed);
+            // Return only the path (e.g. /media/dialer/recordings/file.mp3)
+            return parsed.pathname + parsed.search;
+        } catch {
+            return trimmed;
+        }
+    }
+
+    // Already a relative path — use as-is
     return trimmed;
-  }
-
-  // Relative path like /media/... — use same-origin unless backend base is explicitly configured
-  if (trimmed.startsWith('/')) {
-    return BACKEND_BASE ? `${BACKEND_BASE}${trimmed}` : trimmed;
-  }
-
-  // Unexpected format — return as-is
-  return trimmed;
 }
