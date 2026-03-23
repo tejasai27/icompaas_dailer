@@ -95,9 +95,9 @@ export default function CampaignDetailPage() {
         return () => clearInterval(timer);
     }, [campaign?.next_dispatch_at, campaign?.cooldown_remaining_seconds]);
 
+    // Data-only polling — campaign ticks are now handled server-side by Celery Beat
     const shouldPoll = campaign && (campaign.status === 'active' || Number(campaign.in_progress_contacts || 0) > 0);
-    useVisibleInterval(async () => {
-        try { await api.post(`/campaigns/${id}/tick/`); } catch {}
+    useVisibleInterval(() => {
         fetchData({ silent: true });
     }, shouldPoll ? 5000 : null);
 

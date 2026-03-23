@@ -105,6 +105,29 @@ services:
         limits:
           memory: 3G
 
+  celery-beat:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    user: "0:0"
+    command: >
+      sh -c "exec runuser -u appuser -- celery -A config beat --loglevel=info"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
   frontend:
     build:
       context: ./frontend
@@ -119,7 +142,7 @@ services:
       - /app/node_modules
     ports:
       # Single public entrypoint by default: http://<server-ip>/
-      - "${PUBLIC_HTTP_PORT:-80}:5173"
+      - "5173:5173"
     depends_on:
       - backend
     networks:

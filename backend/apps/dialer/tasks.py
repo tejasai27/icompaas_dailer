@@ -7,6 +7,55 @@ from uuid import uuid4
 
 logger = logging.getLogger("dialer.campaign")
 
+CAMPAIGN_TICK_LOCK_KEY = "dialer:campaign_tick_all:lock"
+CAMPAIGN_TICK_LOCK_SECONDS = 15
+
+
+@shared_task(bind=True, max_retries=0)
+def tick_all_active_campaigns(self):
+    """
+    Celery Beat periodic task that ticks all active campaigns server-side.
+    Replaces the frontend polling of POST /campaigns/{id}/tick/ every 5s.
+    """
+    # Distributed lock so only one worker processes ticks at a time
+    if not cache.add(CAMPAIGN_TICK_LOCK_KEY, "1", timeout=CAMPAIGN_TICK_LOCK_SECONDS):
+        return
+
+    try:
+        from .models import Campaign, CampaignStatus
+        from .views import (
+            _dispatch_campaign_next_call,
+            _log_campaign_event,
+            _recover_stuck_in_progress_leads,
+            _sync_campaign_open_calls,
+        )
+
+        campaigns = list(
+            Campaign.objects.select_related("assigned_agent")
+            .filter(status=CampaignStatus.ACTIVE)
+        )
+
+        for campaign in campaigns:
+            try:
+                sync = _sync_campaign_open_calls(campaign, limit=20)
+                recovery = _recover_stuck_in_progress_leads(campaign)
+
+                campaign.refresh_from_db()
+                dispatch = {"dispatched": False, "reason": "campaign_not_active"}
+                if campaign.status == CampaignStatus.ACTIVE:
+                    dispatch = _dispatch_campaign_next_call(campaign)
+
+                _log_campaign_event(
+                    campaign,
+                    "campaign_tick_beat",
+                    "Celery Beat tick processed",
+                    details={"recovery": recovery, "sync": sync, "dispatch": dispatch},
+                )
+            except Exception:
+                logger.exception("tick failed for campaign_id=%s", campaign.id)
+    finally:
+        cache.delete(CAMPAIGN_TICK_LOCK_KEY)
+
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=60)
 def transcribe_recording_task(self, recording_id, force=False, language=None, reason=""):

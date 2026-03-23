@@ -246,12 +246,11 @@ export default function CampaignsPage() {
     useEffect(() => { campaignsRef.current = campaigns; }, [campaigns]);
     useEffect(() => { fetchCampaignsRef.current = fetchCampaigns; });
 
-    useVisibleInterval(async () => {
-        const activeIds = campaignsRef.current.filter((c) => c.status === 'active').map((c) => c.id).filter(Boolean);
-        if (activeIds.length === 0) return;
-        await Promise.allSettled(activeIds.map((id) => api.post(`/campaigns/${id}/tick/`)));
+    // Data-only polling — campaign ticks are now handled server-side by Celery Beat
+    useVisibleInterval(() => {
+        const hasActive = campaignsRef.current.some((c) => c.status === 'active');
         fetchCampaignsRef.current?.({ silent: true });
-    }, 5000);
+    }, campaigns.some((c) => c.status === 'active') ? 5000 : 15000);
 
     const handleCampaignAction = async (campaign, action) => {
         try {
